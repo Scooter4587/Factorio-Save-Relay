@@ -211,6 +211,9 @@ reservations are atomic across worlds; R2 reads and writes reserve an operation
 in D1 before accessing the bucket. These limits do not cover other access to
 the Cloudflare account and are not a guarantee against an invoice. See
 [remote-test.md](remote-test.md) before remote deployment.
+The remote template enables `PRIVATE_PILOT="true"`, which limits the service
+to two registered players and one world. The local development config leaves
+this unset so tests can create more fixtures.
 
 References: [R2 integrity/conditional writes](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/)
 and [PKWARE ZIP format](https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT).

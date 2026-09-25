@@ -31,6 +31,13 @@ these application limits.
 See Cloudflare's [R2 pricing](https://developers.cloudflare.com/r2/pricing/)
 and [budget alert behavior](https://developers.cloudflare.com/billing/manage/budget-alerts/).
 
+The remote template also enables `PRIVATE_PILOT`. It allows at most **two
+registered players and one world** in this service. Both limits are checked
+inside database transactions, including simultaneous requests. The second
+player joins the first world by invitation; they do not create another world.
+Keep the registration key private. Once both players have registered, disable
+registration in the config and redeploy to close enrollment completely.
+
 1. Install Node.js 22+, open PowerShell in `backend/`, run `npm ci` and
    `npx wrangler login` with your Cloudflare account. Do this yourself; do
    not share Cloudflare credentials or API tokens.
@@ -64,9 +71,8 @@ and [budget alert behavior](https://developers.cloudflare.com/billing/manage/bud
    in Windows Credential Manager; the registration key is not stored.
 
 The template schedules daily retention cleanup. A failed cleanup stays pending
-for a later run. After both profiles exist, set `ALLOW_REGISTRATION` to
-`"false"` in the copied config and redeploy. Existing device tokens continue
-to work. The R2 bucket must remain private.
+for a later run. Existing device tokens continue to work after registration is
+disabled. The R2 bucket must remain private.
 
 This intermediary Worker relay is a **temporary small-save test path**. A
 production-ready transfer requires direct signed R2 uploads, more failure

@@ -12,6 +12,7 @@ interface Env {
   REGISTRATION_KEY?: string;
   SAVES?: R2Bucket;
   ALLOW_LOCAL_TRANSFERS?: string;
+  PRIVATE_PILOT?: string;
 }
 
 const SERVICE_VERSION = "0.1.0";
@@ -67,7 +68,7 @@ export default {
         if (!await registrationAuthorized(request, env)) {
           throw new ApiError(403, "registration_denied", "A valid registration key is required.");
         }
-        return await register(request, env.DB);
+        return await register(request, env.DB, env.PRIVATE_PILOT === "true");
       }
       const identity = await authenticate(request, env.DB);
       if (transfer) {
@@ -90,7 +91,7 @@ export default {
       }
       if (pathname === "/v1/me") return json({ identity });
       if (pathname === "/v1/worlds") {
-        return method === "GET" ? await listWorlds(env.DB, identity) : await createWorld(request, env.DB, identity);
+        return method === "GET" ? await listWorlds(env.DB, identity) : await createWorld(request, env.DB, identity, env.PRIVATE_PILOT === "true");
       }
       if (pathname === "/v1/invites/redeem") return await redeemInvite(request, env.DB, identity);
       if (leaseMatch) {

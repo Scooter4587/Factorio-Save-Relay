@@ -6,7 +6,8 @@
   "workers_dev": true,
   "vars": {
     "ALLOW_REGISTRATION": "true",
-    "ALLOW_LOCAL_TRANSFERS": "true"
+    "ALLOW_LOCAL_TRANSFERS": "true",
+    "PRIVATE_PILOT": "true"
   },
   "d1_databases": [
     {

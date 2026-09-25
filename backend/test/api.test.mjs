@@ -72,7 +72,7 @@ test("registration is local-only without a secret and gated by a secret remotely
   });
   assert.equal(localOnly.status, 403);
   const remote = runtime({ modules: true, script, compatibilityDate: "2026-09-25", d1Databases: ["DB"],
-    bindings: { ALLOW_REGISTRATION: "true", REGISTRATION_KEY: "long-disposable-test-secret" } });
+    bindings: { ALLOW_REGISTRATION: "true", REGISTRATION_KEY: "long-disposable-test-secret", PRIVATE_PILOT: "true" } });
   try {
     const remoteDb = await remote.getD1Database("DB");
     for (const file of (await readdir(new URL("../migrations/", import.meta.url))).filter(f => f.endsWith(".sql")).sort()) {
@@ -89,7 +89,34 @@ test("registration is local-only without a secret and gated by a secret remotely
       method: "POST", headers: { "content-type": "application/json", "x-relay-registration-key": "long-disposable-test-secret" }, body,
     });
     assert.equal(response.status, 201);
-    assert.ok((await response.json()).token);
+    const owner = await response.json();
+    assert.ok(owner.token);
+    const registerPilot = () => api("/v1/devices/register", { method: "POST",
+      headers: { "x-relay-registration-key": "long-disposable-test-secret" },
+      body: { displayName: "Friend", deviceName: "Friend-PC" } }, remote);
+    const competingRegistrations = await Promise.all([registerPilot(), registerPilot()]);
+    assert.deepEqual(competingRegistrations.map((r) => r.status).sort(), [201, 403]);
+    assert.equal(competingRegistrations.find((r) => r.status === 403).body.error.code, "pilot_full");
+    const friend = competingRegistrations.find((r) => r.status === 201).body;
+    assert.equal((await remoteDb.prepare("SELECT COUNT(*) AS count FROM users").first()).count, 2);
+    assert.equal((await remoteDb.prepare("SELECT COUNT(*) AS count FROM devices").first()).count, 2);
+
+    const createPilotWorld = (player) => api("/v1/worlds", { method: "POST", token: player.token,
+      body: { name: "Shared save" } }, remote);
+    const competingWorlds = await Promise.all([createPilotWorld(owner), createPilotWorld(friend)]);
+    assert.deepEqual(competingWorlds.map((r) => r.status).sort(), [201, 403]);
+    assert.equal(competingWorlds.find((r) => r.status === 403).body.error.code, "pilot_world_limit");
+    assert.equal((await remoteDb.prepare("SELECT COUNT(*) AS count FROM worlds").first()).count, 1);
+    assert.equal((await remoteDb.prepare("SELECT COUNT(*) AS count FROM world_members").first()).count, 1);
+    const created = competingWorlds.find((r) => r.status === 201).body.world;
+    const creator = created.ownerUserId === owner.user.id ? owner : friend;
+    const other = creator === owner ? friend : owner;
+    const invitation = await api(`/v1/worlds/${created.id}/invites`, { method: "POST", token: creator.token }, remote);
+    assert.equal(invitation.status, 201);
+    const joined = await api("/v1/invites/redeem", { method: "POST", token: other.token,
+      body: { code: invitation.body.invite.code } }, remote);
+    assert.equal(joined.status, 200);
+    assert.equal(joined.body.world.id, created.id);
   } finally { await remote.dispose(); }
 });
 

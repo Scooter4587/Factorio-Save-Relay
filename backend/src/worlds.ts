@@ -34,13 +34,20 @@ export async function listWorlds(db: D1Database, identity: Identity): Promise<Re
   return json({ worlds: results });
 }
 
-export async function createWorld(request: Request, db: D1Database, identity: Identity): Promise<Response> {
+export async function createWorld(request: Request, db: D1Database, identity: Identity, privatePilot = false): Promise<Response> {
   const name = textField(await readBody(request), "name");
   const id = crypto.randomUUID();
-  await db.batch([
-    db.prepare("INSERT INTO worlds (id, owner_user_id, name) VALUES (?, ?, ?)").bind(id, identity.userId, name),
-    db.prepare("INSERT INTO world_members (world_id, user_id, role) VALUES (?, ?, 'owner')").bind(id, identity.userId),
+  const [world, membership] = await db.batch<{ id: string }>([
+    db.prepare(privatePilot
+      ? "INSERT INTO worlds (id, owner_user_id, name) SELECT ?, ?, ? WHERE (SELECT COUNT(*) FROM worlds) < 1 RETURNING id"
+      : "INSERT INTO worlds (id, owner_user_id, name) VALUES (?, ?, ?) RETURNING id")
+      .bind(id, identity.userId, name),
+    db.prepare("INSERT INTO world_members (world_id, user_id, role) SELECT id, owner_user_id, 'owner' FROM worlds WHERE id = ? RETURNING world_id AS id")
+      .bind(id),
   ]);
+  if (!world?.results[0] || !membership?.results[0]) {
+    throw new ApiError(403, "pilot_world_limit", "This private pilot already has one world.");
+  }
   return json({ world: await getWorld(db, id, identity.userId) }, 201);
 }
 

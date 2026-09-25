@@ -24,18 +24,24 @@ export function validToken(token: string, kind: "device" | "invite" | "lease"): 
   return new RegExp(`^fsr_${kind}\\.${UUID}\\.[0-9a-f]{64}$`).test(token);
 }
 
-export async function register(request: Request, db: D1Database): Promise<Response> {
+export async function register(request: Request, db: D1Database, privatePilot = false): Promise<Response> {
   const body = await readBody(request);
   const displayName = textField(body, "displayName");
   const deviceName = textField(body, "deviceName");
   const userId = crypto.randomUUID();
   const deviceId = crypto.randomUUID();
   const token = newToken("device", deviceId);
-  await db.batch([
-    db.prepare("INSERT INTO users (id, display_name) VALUES (?, ?)").bind(userId, displayName),
-    db.prepare("INSERT INTO devices (id, user_id, device_name, token_hash) VALUES (?, ?, ?, ?)")
-      .bind(deviceId, userId, deviceName, await tokenHash(token)),
+  const [user, device] = await db.batch<{ id: string }>([
+    db.prepare(privatePilot
+      ? "INSERT INTO users (id, display_name) SELECT ?, ? WHERE (SELECT COUNT(*) FROM users) < 2 RETURNING id"
+      : "INSERT INTO users (id, display_name) VALUES (?, ?) RETURNING id")
+      .bind(userId, displayName),
+    db.prepare("INSERT INTO devices (id, user_id, device_name, token_hash) SELECT ?, id, ?, ? FROM users WHERE id = ? RETURNING id")
+      .bind(deviceId, deviceName, await tokenHash(token), userId),
   ]);
+  if (!user?.results[0] || !device?.results[0]) {
+    throw new ApiError(403, "pilot_full", "This private pilot already has two registered players.");
+  }
   return json({ user: { id: userId, displayName }, device: { id: deviceId, deviceName }, token }, 201);
 }
 
