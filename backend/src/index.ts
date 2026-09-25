@@ -4,6 +4,7 @@ import { createInvite, createWorld, getWorld, listWorlds, redeemInvite } from ".
 import { acquireLease, changeLease } from "./leases";
 import { beginUpload, putContent, finalizeUpload, listRevisions, download, restoreRevision, cleanupRetention } from "./transfers";
 import { meteredBucket } from "./cost-guard";
+import { browserAsset, browserRequest, browserSession } from "./web";
 
 interface Env {
   DB?: D1Database;
@@ -32,11 +33,22 @@ async function registrationAuthorized(request: Request, env: Env): Promise<boole
     && (host === "localhost" || host === "127.0.0.1" || host === "[::1]");
 }
 
-export default {
-  async fetch(request, env): Promise<Response> {
+async function handle(request: Request, env: Env): Promise<Response> {
     try {
       const { pathname } = new URL(request.url);
       const method = request.method;
+      if (pathname === "/factorio-relay" || pathname === "/factorio-relay/") {
+        if (method === "GET") return browserAsset("page");
+      }
+      if (pathname === "/factorio-relay/app.js" && method === "GET") return browserAsset("script");
+      if (pathname === "/factorio-relay/style.css" && method === "GET") return browserAsset("style");
+      if (pathname === "/factorio-relay/v1/browser/session") {
+        if (!env.DB) throw new ApiError(503, "database_unavailable", "Database binding is not configured.");
+        return await browserSession(request, env.DB);
+      }
+      if (pathname.startsWith("/factorio-relay/v1/")) {
+        return await browserRequest(request, env, handle);
+      }
       if (method === "GET" && pathname === "/health") {
         return json({ service: "factorio-save-relay-api", status: "ok", version: SERVICE_VERSION });
       }
@@ -111,7 +123,10 @@ export default {
       console.error("API request failed unexpectedly.");
       return json({ error: { code: "internal_error", message: "The request could not be completed." } }, 500);
     }
-  },
+}
+
+export default {
+  fetch: handle,
   async scheduled(_event, env): Promise<void> {
     if (env.DB && env.SAVES && env.ALLOW_LOCAL_TRANSFERS === "true") {
       await cleanupRetention(env.DB, env.SAVES);

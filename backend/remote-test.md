@@ -1,7 +1,8 @@
 # Manually connect a private Cloudflare test service
 
 This prepares a two-PC test with **copies** of a Factorio save. The service
-uses a `workers.dev` HTTPS address, so no personal domain is needed. Do not
+also has a `workers.dev` HTTPS fallback. The browser panel is routed to
+`https://scooteruniverse.eu/factorio-relay`. Do not
 use the only copy of an existing world. The current Worker relay accepts at
 most 90,000,000-byte ZIPs remotely; larger saves need direct R2 upload. The
 app does not yet watch or replace the live game save.
@@ -64,11 +65,13 @@ registration in the config and redeploy to close enrollment completely.
    and enter the key at the prompt. Never put it in a repository file. Anyone
    with this key can register another test user, so share it only with the
    second player through a private channel.
-6. Run `npx wrangler deploy --config wrangler.remote.jsonc`. Wrangler prints
-   a `https://...workers.dev` URL. Open `<URL>/health` to verify the service.
-   Enter the base URL in both Windows apps. Each player enters the registration
-   key once and registers their own profile. The app keeps each device token
-   in Windows Credential Manager; the registration key is not stored.
+6. Run `npx wrangler deploy --config wrangler.remote.jsonc`. Wrangler connects
+   only the `/factorio-relay` paths to this Worker; the existing Pages site
+   continues to handle other paths. Open `<workers.dev URL>/health` and
+   `https://scooteruniverse.eu/factorio-relay` to verify both. The browser
+   panel lets each player register, create/join the world and manually exchange
+   ZIP copies. Save each displayed device token privately. The Windows app
+   remains available at the `workers.dev` base URL for its separate test flow.
 
 The template schedules daily retention cleanup. A failed cleanup stays pending
 for a later run. Existing device tokens continue to work after registration is

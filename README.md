@@ -29,7 +29,7 @@ conflicting histories.
 | API | Cloudflare Workers / TypeScript | Authentication, membership, leases and revision coordination |
 | Metadata | Cloudflare D1 | Users, devices, worlds, invites and revision history |
 | Save storage | Cloudflare R2 | Private immutable Factorio save archives |
-| Dashboard | Web UI | Status, history, restore and emergency unlock |
+| Browser panel | Worker-hosted Web UI | Manual private registration, world, history and ZIP handoff |
 
 See [docs/architecture.md](docs/architecture.md) for the initial technical design.
 
@@ -38,7 +38,7 @@ See [docs/architecture.md](docs/architecture.md) for the initial technical desig
 ```text
 backend/     Cloudflare Worker API and D1 migrations
 client/      Windows desktop client
-dashboard/   Web dashboard (planned after the sync core is proven)
+backend/src/web*   Private browser panel served by the Worker
 docs/        Architecture and development notes
 ```
 
@@ -76,9 +76,9 @@ dotnet build client/FactorioSaveRelay.Client/FactorioSaveRelay.Client.csproj
 The manual test client works with localhost or a private HTTPS test service and
 only accepts copies outside the real Factorio saves folder. See
 [client/README.md](client/README.md) for startup steps and file-safety limits.
-The [remote service guide](backend/remote-test.md) prepares two-PC testing
-without a personal domain; it is limited to small ZIPs until direct R2 upload
-is implemented.
+The [remote service guide](backend/remote-test.md) covers the private Worker
+and browser panel at `scooteruniverse.eu/factorio-relay`. It is limited to
+small ZIPs until direct R2 upload is implemented.
 
 ## Project status
 
@@ -94,6 +94,7 @@ is implemented.
 - [x] Manual local Windows client with verified download and local backup
 - [x] Portable Windows test build and HTTPS service connection
 - [x] Automatic upload of stable changes to a selected test ZIP while hosting
+- [x] Private manual browser panel for two players, with verified ZIP handoff
 - [ ] Automatic download and safe integration with the selected real Factorio save
 - [ ] Direct R2 upload and verified download
 - [x] Backend five-revision retention and restore (local)

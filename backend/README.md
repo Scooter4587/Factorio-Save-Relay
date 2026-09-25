@@ -4,6 +4,44 @@ The Worker currently implements device identities, world ownership, membership,
 one-time invitations, renewable host leases and local two-phase ZIP transfers.
 The Windows test app uses these endpoints with ZIP copies.
 
+## Private browser control panel
+
+The Worker serves a Slovak manual test panel at `/factorio-relay` (locally:
+`http://127.0.0.1:8787/factorio-relay`). On the remote pilot it is routed to
+`https://scooteruniverse.eu/factorio-relay`; the existing Pages site handles
+all other paths. The same panel is also available on the Worker's `workers.dev`
+hostname as a fallback. The route is configured in `wrangler.remote.example.jsonc`.
+
+Each of the two players registers once with the private registration key. The
+panel shows the new device token once: store it in a password manager. Later
+sign-in uses that token, not a display name or password. The browser keeps it
+in a seven-day `HttpOnly`, `Secure` (HTTPS), `SameSite=Strict` cookie scoped to
+`/factorio-relay`; the JavaScript does not save it in local/session storage.
+Sign-out clears the browser cookie, but does not revoke the device token. A
+lost token cannot currently be recovered without administrative work; the pilot
+cannot register more than two users. The same token could be used by a future
+Windows client sign-in flow, which is not yet implemented.
+Because the panel shares the `scooteruniverse.eu` origin with the existing
+site, any future script on that site could make same-origin requests to this
+panel. Keep the site free of untrusted scripts; a separate subdomain would be
+the stronger isolation boundary for a public service.
+
+The owner creates the one pilot world and generates a single-use, 24-hour
+invitation for the second player. Both can view the world, current host and
+revision history. The panel verifies downloaded ZIPs against server SHA-256.
+To upload, it verifies the selected ZIP hash, checks the current revision,
+acquires/renews the host lease, transfers and finalizes, then releases the
+lease. If there is already a revision, the browser insists on downloading that
+revision in the current page session first. This is a guardrail, not proof that
+the chosen upload was actually based on that download. Never overwrite the
+only copy of a real Factorio world while testing. The browser downloads to the
+normal Downloads location; it cannot watch or replace the game's save file.
+
+For the remote pilot, the 90,000,000-byte ZIP cap and 1 GB reserved storage
+cap still apply. The panel does not expose restore or force-unlock: those
+operations need a clearer confirmation and recovery flow before being offered
+to players.
+
 ## Local development
 
 Requires Node.js 22 or newer. From `backend/`:
