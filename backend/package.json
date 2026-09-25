@@ -10,6 +10,7 @@
     "dev": "wrangler dev --config wrangler.local.jsonc --local",
     "db:migrate:local": "wrangler d1 migrations apply factorio-save-relay-local --config wrangler.local.jsonc --local",
     "demo:local": "node scripts/demo-local.mjs",
+    "demo:transfer": "node scripts/demo-transfer.mjs",
     "deploy": "wrangler deploy",
     "deploy:dry": "wrangler deploy --dry-run"
   },

@@ -59,6 +59,8 @@ The local health endpoint is `GET /health`. Local development uses a separate
 configuration and local D1 database; no Cloudflare account or domain is needed.
 With the server running, `npm run demo:local` verifies that two users can share a
 world through a one-time invitation. See [backend/README.md](backend/README.md)
+for details. `npm run demo:transfer` additionally sends synthetic ZIP revisions
+in both directions using two fresh test directories. See the backend guide
 for the API contract and testing instructions. Remote D1 and R2 resources are
 not provisioned yet.
 
@@ -81,6 +83,7 @@ dotnet build client/FactorioSaveRelay.Client/FactorioSaveRelay.Client.csproj
 - [x] Backend world creation and invitation flow (local)
 - [ ] Windows client registration and secure credential storage
 - [x] Backend host lease acquisition, renewal and release (local)
+- [x] Local ZIP upload/finalize, revision history and verified transfer demo
 - [ ] Direct R2 upload and verified download
 - [ ] Five-revision retention and restore
 - [ ] End-to-end two-device test

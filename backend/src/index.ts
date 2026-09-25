@@ -2,10 +2,13 @@ import { ApiError, json } from "./http";
 import { authenticate, register } from "./identity";
 import { createInvite, createWorld, getWorld, listWorlds, redeemInvite } from "./worlds";
 import { acquireLease, changeLease } from "./leases";
+import { beginUpload, putContent, finalizeUpload, listRevisions, download } from "./transfers";
 
 interface Env {
   DB?: D1Database;
   ALLOW_REGISTRATION?: string;
+  SAVES?: R2Bucket;
+  ALLOW_LOCAL_TRANSFERS?: string;
 }
 
 const SERVICE_VERSION = "0.1.0";
@@ -22,12 +25,19 @@ export default {
 
       const worldMatch = /^\/v1\/worlds\/([0-9a-f-]{36})(\/invites)?$/.exec(pathname);
       const leaseMatch = /^\/v1\/worlds\/([0-9a-f-]{36})\/lock\/(acquire|renew|release)$/.exec(pathname);
+      const uploadMatch = /^\/v1\/worlds\/([0-9a-f-]{36})\/uploads\/(begin|finalize)$/.exec(pathname);
+      const contentMatch = /^\/v1\/worlds\/([0-9a-f-]{36})\/uploads\/([0-9a-f-]{36})\/content$/.exec(pathname);
+      const downloadMatch = /^\/v1\/worlds\/([0-9a-f-]{36})\/(?:revisions\/([1-9][0-9]*)\/)?download$/.exec(pathname);
+      const historyMatch = /^\/v1\/worlds\/([0-9a-f-]{36})\/revisions$/.exec(pathname);
+      const transfer = (method === "POST" && uploadMatch) || (method === "PUT" && contentMatch)
+        || (method === "GET" && (downloadMatch || historyMatch));
       const registration = method === "POST" && pathname === "/v1/devices/register";
       const recognized = registration
         || (method === "GET" && pathname === "/v1/me")
         || (["GET", "POST"].includes(method) && pathname === "/v1/worlds")
         || (method === "POST" && pathname === "/v1/invites/redeem")
         || (method === "POST" && leaseMatch)
+        || transfer
         || (worldMatch && ((method === "GET" && !worldMatch[2]) || (method === "POST" && worldMatch[2])));
       if (!recognized) throw new ApiError(404, "not_found", "The requested endpoint does not exist.");
       if (!env.DB) throw new ApiError(503, "database_unavailable", "Database binding is not configured.");
@@ -38,6 +48,18 @@ export default {
         return await register(request, env.DB);
       }
       const identity = await authenticate(request, env.DB);
+      if (transfer) {
+        if (env.ALLOW_LOCAL_TRANSFERS !== "true") throw new ApiError(503, "transfers_disabled", "Local transfer transport is disabled.");
+        if (!env.SAVES) throw new ApiError(503, "storage_unavailable", "Save storage is not configured.");
+        if (uploadMatch) return uploadMatch[2] === "begin"
+          ? await beginUpload(request, env.DB, uploadMatch[1]!, identity)
+          : await finalizeUpload(request, env.DB, env.SAVES, uploadMatch[1]!, identity);
+        if (contentMatch) return await putContent(request, env.DB, env.SAVES, contentMatch[1]!, contentMatch[2]!, identity);
+        if (historyMatch) return await listRevisions(env.DB, historyMatch[1]!, identity);
+        const revision = downloadMatch![2] === undefined ? undefined : Number(downloadMatch![2]);
+        if (revision !== undefined && !Number.isSafeInteger(revision)) throw new ApiError(400, "invalid_revision", "Invalid revision number.");
+        return await download(env.DB, env.SAVES, downloadMatch![1]!, identity, revision);
+      }
       if (pathname === "/v1/me") return json({ identity });
       if (pathname === "/v1/worlds") {
         return method === "GET" ? await listWorlds(env.DB, identity) : await createWorld(request, env.DB, identity);

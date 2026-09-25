@@ -1,7 +1,8 @@
 # Backend
 
 The Worker currently implements device identities, world ownership, membership,
-one-time invitations and renewable host leases. Save transfers are not implemented yet.
+one-time invitations, renewable host leases and local two-phase ZIP transfers.
+The Windows app is not yet wired to these endpoints.
 
 ## Local development
 
@@ -22,6 +23,7 @@ With the server running, open a second terminal in `backend/`:
 
 ```bash
 npm run demo:local
+npm run demo:transfer
 ```
 
 The demo registers two disposable users, creates a world, redeems an invitation
@@ -29,6 +31,12 @@ and checks that both users see the same world. It then acquires Adam's host leas
 checks that the friend is blocked, renews and releases it, and hands hosting to
 the friend. Each run creates new local data.
 It never prints or saves the raw credentials and does not touch Factorio saves.
+The transfer demo additionally generates two synthetic ZIPs, sends revisions in
+both directions and checks downloaded size, SHA-256 and exact fixture bytes.
+It writes to new `artifacts/transfer-demo-*/adam` and `friend` directories only;
+downloads are first written as `.download` files and renamed after verification.
+These fixtures are valid archives, not playable Factorio worlds. Source files are
+preserved and no existing Factorio save path is accepted by the demo.
 
 ## Validation
 
@@ -41,7 +49,8 @@ npm run deploy:dry
 Tests bundle the real Worker and run HTTP requests against Miniflare with a fresh
 temporary D1 database initialized from the migration. They cover permissions,
 revoked credentials, expired/reused invitations, concurrent redemption, input
-validation, transaction rollback, concurrent host claims and expired/stale leases.
+validation, transaction rollback, concurrent host claims, expired/stale leases,
+interrupted/corrupt transfers, concurrent finalization and ZIP decompression/CRC.
 No remote bindings or credentials are used.
 Miniflare and esbuild are pinned to the versions already used by Wrangler.
 
@@ -71,7 +80,7 @@ by the server, never trusted from request fields.
 A `world` contains `id`, `name`, `ownerUserId`, `currentRevision`, caller's `role`
 and `createdAt`, plus `hostDeviceId` and `hostLeaseExpiresAt`. The host fields
 are null when no active lease exists; no lease secret is exposed. Revision is
-zero until save transfers are implemented.
+zero before the first finalized upload.
 
 Registration currently creates one new user and one device every time. A display
 name is a label, not a login or proof of identity. Linking another device to an
@@ -112,10 +121,71 @@ are reported as inactive and can be replaced by the next valid acquisition.
 Acquisition returns 409 `lease_unavailable` for an occupied world or revision
 mismatch. Renewal/release return 409 `lease_lost` when the lease no longer belongs
 to that active device/session. The client must stop publishing on lease loss;
-the future upload/finalize endpoints must independently enforce that rule.
+the upload/finalize endpoints independently enforce that rule.
 This API does not prevent someone manually starting Factorio outside the client.
 Membership removal or device revocation blocks subsequent lease operations;
 the outstanding lease expires naturally. Force-unlock is not implemented yet.
+
+## Local save transfer protocol
+
+The separate local configuration enables `ALLOW_LOCAL_TRANSFERS="true"` and an
+emulated private R2 bucket named `SAVES`. Run `npm run db:migrate:local` after
+updating an existing checkout to apply `0002_upload_sessions.sql`. Transfer
+endpoints are disabled by default in the deployment configuration.
+
+| Method | Path | Body / result |
+| --- | --- | --- |
+| POST | `/v1/worlds/{id}/uploads/begin` | `{ baseRevision, lockToken, sha256, fileSize }` -> 201 `{ upload }` |
+| PUT | `/v1/worlds/{id}/uploads/{uploadId}/content` | ZIP bytes, `Content-Type: application/zip`, exact `Content-Length`, `X-Relay-Lock: <lease-token>` |
+| POST | `/v1/worlds/{id}/uploads/finalize` | `{ uploadId, lockToken }` -> `{ revision }` |
+| GET | `/v1/worlds/{id}/download` | Current finalized ZIP; 404 before the first upload |
+| GET | `/v1/worlds/{id}/revisions` | `{ revisions }`, newest 100 finalized/conflict records |
+| GET | `/v1/worlds/{id}/revisions/{number}/download` | Explicit archived or conflict download for world members |
+
+All requests require the device bearer credential. Begin and content upload
+require an active lease at the current base revision. Begin reserves a unique
+revision number and immutable random R2 object key; gaps from abandoned uploads
+are expected. The response contains `id`, `revision`, `baseRevision`, `sha256`,
+`fileSize`, `expiresAt` and a relative `contentPath`. The session expires after
+24 hours and remains tied to the original acquisition's lease token.
+
+PUT streams bytes to R2 with the declared SHA-256 checksum and a create-only
+condition. R2 verifies the checksum. Repeating the same PUT can return success
+for the already verified immutable object, but cannot overwrite it. A failed
+or interrupted upload never changes the world's current revision. The API caps
+this local transport at 512 MiB per ZIP; this is not a production Workers limit
+or a claim that large saves have been performance-tested.
+
+Finalize checks stored size/checksum and validates the ZIP32 central/local
+records, entry boundaries, decompression, uncompressed sizes and entry CRC32s.
+Validation streams entry output to counters without extracting files to disk.
+The supported subset is a non-empty, single-disk, unencrypted archive using
+STORE or DEFLATE, with at most 2,048 entries, a 4 MiB directory and 2 GiB total
+expanded data. Data descriptors are supported; ZIP64, other compression methods,
+self-extracting prefixes and arbitrary padding are rejected. This checks ZIP
+integrity, not whether Factorio can load the world with the installed game/mods.
+
+After validation, a single D1 transaction rechecks the lease and base revision,
+archives the old current revision and promotes the new one. Only one competing
+candidate can succeed. If the lease, membership, session expiry or base revision
+changed, the upload is preserved as a conflict and finalize returns 409
+`upload_conflict`. An already successful finalize can be retried idempotently,
+including after the revision becomes archived. It never rolls back the world.
+
+Downloads are restricted to members. They stream immutable content only when its
+R2 size and SHA-256 metadata match D1, and expose `X-Save-Sha256`, `X-Save-Revision`
+and `Content-Length`. Clients must independently verify the received bytes before
+replacing any local file. Incomplete uploads never appear as downloadable
+revisions. Storage loss/integrity mismatch returns 503; bad uploaded bytes or
+invalid archives return 422; mismatched size headers return 400.
+
+Still pending: direct short-lived R2 transfer URLs, retention of five finalized
+versions, restore, abandoned-upload cleanup and the Windows client's game-process
+guard, local backup and atomic replacement workflow. Nothing is deleted by this
+prototype. Do not use this local relay transport as the production service.
+
+References: [R2 integrity/conditional writes](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/)
+and [PKWARE ZIP format](https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT).
 
 Errors use `{ "error": { "code": "...", "message": "..." } }`:
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { before, after, test } from "node:test";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { build } from "esbuild";
 import { Miniflare, convertV4MiniflareOptions } from "miniflare";
 
@@ -16,9 +16,11 @@ before(async () => {
   script = result.outputFiles[0].text;
   mf = runtime({ modules: true, script, compatibilityDate: "2026-09-25", d1Databases: ["DB"], bindings: { ALLOW_REGISTRATION: "true" } });
   db = await mf.getD1Database("DB");
-  const migration = await readFile(new URL("../migrations/0001_initial.sql", import.meta.url), "utf8");
-  for (const statement of migration.split(";").map((s) => s.trim()).filter(Boolean)) {
-    await db.prepare(statement).run();
+  for (const file of (await readdir(new URL("../migrations/", import.meta.url))).filter(f => f.endsWith(".sql")).sort()) {
+    const migration = await readFile(new URL(`../migrations/${file}`, import.meta.url), "utf8");
+    for (const statement of migration.split(";").map((s) => s.trim()).filter(Boolean)) {
+      await db.prepare(statement).run();
+    }
   }
 });
 after(async () => { await mf?.dispose(); });
@@ -385,4 +387,12 @@ test("invalid revision and lease bodies never create a lease", async () => {
   }
   assert.equal((await api(`/v1/worlds/${shared.id}`, { token: owner.token })).body.world.hostDeviceId, null);
   assert.equal((await api(`/v1/worlds/${shared.id}/lock/acquire`)).status, 404);
+});
+
+test("transfer transport is disabled by default even for authenticated users", async () => {
+  const owner = await register();
+  const shared = await world(owner);
+  const response = await api(`/v1/worlds/${shared.id}/download`, { token: owner.token });
+  assert.equal(response.status, 503);
+  assert.equal(response.body.error.code, "transfers_disabled");
 });
