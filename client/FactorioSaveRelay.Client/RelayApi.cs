@@ -10,15 +10,19 @@ internal sealed class RelayApi : IDisposable
 {
     private readonly HttpClient _client;
     private readonly string _token;
+    private readonly string? _registrationKey;
 
-    public RelayApi(string address, string token)
+    public RelayApi(string address, string token, string? registrationKey = null)
     {
-        if (!Uri.TryCreate(address, UriKind.Absolute, out var uri) || !uri.IsLoopback
-            || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)
-            || !string.IsNullOrEmpty(uri.UserInfo) || uri.AbsolutePath != "/")
-            throw new InvalidOperationException("The local test client accepts only a localhost service address.");
-        _client = new HttpClient { BaseAddress = uri, Timeout = TimeSpan.FromMinutes(30) };
+        if (!Uri.TryCreate(address, UriKind.Absolute, out var uri)
+            || (uri.Scheme != Uri.UriSchemeHttps && !(uri.IsLoopback && uri.Scheme == Uri.UriSchemeHttp))
+            || !string.IsNullOrEmpty(uri.UserInfo) || uri.AbsolutePath != "/"
+            || !string.IsNullOrEmpty(uri.Query) || !string.IsNullOrEmpty(uri.Fragment))
+            throw new InvalidOperationException("Use an HTTPS service address, or HTTP on localhost for development.");
+        _client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false })
+            { BaseAddress = uri, Timeout = TimeSpan.FromMinutes(30) };
         _token = token;
+        _registrationKey = registrationKey;
     }
 
     public async Task<JsonElement> JsonAsync(HttpMethod method, string path, object? body = null)
@@ -57,6 +61,8 @@ internal sealed class RelayApi : IDisposable
             throw new InvalidOperationException("Invalid API path.");
         var request = new HttpRequestMessage(method, path);
         if (_token.Length > 0) request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _token);
+        if (path == "/v1/devices/register" && !string.IsNullOrWhiteSpace(_registrationKey))
+            request.Headers.Add("X-Relay-Registration-Key", _registrationKey);
         return request;
     }
 

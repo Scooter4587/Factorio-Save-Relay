@@ -14,7 +14,7 @@ let script;
 before(async () => {
   const result = await build({ entryPoints: ["src/index.ts"], bundle: true, write: false, format: "esm", platform: "neutral", target: "es2023" });
   script = result.outputFiles[0].text;
-  mf = runtime({ modules: true, script, compatibilityDate: "2026-09-25", d1Databases: ["DB"], bindings: { ALLOW_REGISTRATION: "true" } });
+  mf = runtime({ modules: true, script, compatibilityDate: "2026-09-25", d1Databases: ["DB"], bindings: { ALLOW_REGISTRATION: "true", ALLOW_INSECURE_LOCAL_REGISTRATION: "true" } });
   db = await mf.getD1Database("DB");
   for (const file of (await readdir(new URL("../migrations/", import.meta.url))).filter(f => f.endsWith(".sql")).sort()) {
     const migration = await readFile(new URL(`../migrations/${file}`, import.meta.url), "utf8");
@@ -63,6 +63,34 @@ test("health/version remain public; unknown routes return JSON 404", async () =>
   assert.equal((await api("/health")).body.status, "ok");
   assert.equal((await api("/v1/version")).status, 200);
   assert.equal((await api("/missing")).status, 404);
+});
+
+test("registration is local-only without a secret and gated by a secret remotely", async () => {
+  const body = JSON.stringify({ displayName: "Remote", deviceName: "PC" });
+  const localOnly = await mf.dispatchFetch("https://relay.example.com/v1/devices/register", {
+    method: "POST", headers: { "content-type": "application/json" }, body,
+  });
+  assert.equal(localOnly.status, 403);
+  const remote = runtime({ modules: true, script, compatibilityDate: "2026-09-25", d1Databases: ["DB"],
+    bindings: { ALLOW_REGISTRATION: "true", REGISTRATION_KEY: "long-disposable-test-secret" } });
+  try {
+    const remoteDb = await remote.getD1Database("DB");
+    for (const file of (await readdir(new URL("../migrations/", import.meta.url))).filter(f => f.endsWith(".sql")).sort()) {
+      const migration = await readFile(new URL(`../migrations/${file}`, import.meta.url), "utf8");
+      for (const statement of migration.split(";").map((s) => s.trim()).filter(Boolean)) await remoteDb.prepare(statement).run();
+    }
+    for (const key of [undefined, "wrong"]) {
+      const response = await remote.dispatchFetch("https://relay.example.com/v1/devices/register", {
+        method: "POST", headers: { "content-type": "application/json", ...(key ? { "x-relay-registration-key": key } : {}) }, body,
+      });
+      assert.equal(response.status, 403);
+    }
+    const response = await remote.dispatchFetch("https://relay.example.com/v1/devices/register", {
+      method: "POST", headers: { "content-type": "application/json", "x-relay-registration-key": "long-disposable-test-secret" }, body,
+    });
+    assert.equal(response.status, 201);
+    assert.ok((await response.json()).token);
+  } finally { await remote.dispose(); }
 });
 
 test("registration returns distinct identities, stores only a hash, and authenticates", async () => {

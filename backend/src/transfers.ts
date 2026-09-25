@@ -6,6 +6,9 @@ import { getWorld } from "./worlds";
 // This bounded relay transport is for local development only. Production will
 // use short-lived direct R2 URLs rather than routing large saves through Workers.
 export const MAX_LOCAL_UPLOAD_BYTES = 512 * 1024 * 1024;
+// The interim Worker relay stays below the 100 MB inbound limit on a Free zone.
+// Larger remote saves require direct-to-R2 upload instead of this transport.
+export const MAX_REMOTE_RELAY_UPLOAD_BYTES = 90 * 1000 * 1000;
 const NOW = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
 
 interface Revision {
@@ -58,8 +61,11 @@ export async function beginUpload(request: Request, db: D1Database, worldId: str
   const sha256 = textField(body, "sha256", 64).toLowerCase();
   if (!/^[a-f0-9]{64}$/.test(sha256)) throw new ApiError(400, "invalid_hash", "sha256 must be 64 hexadecimal characters.");
   const size = body.fileSize;
-  if (typeof size !== "number" || !Number.isSafeInteger(size) || size < 22 || size > MAX_LOCAL_UPLOAD_BYTES) {
-    throw new ApiError(400, "invalid_size", `fileSize must be between 22 and ${MAX_LOCAL_UPLOAD_BYTES} bytes.`);
+  const host = new URL(request.url).hostname;
+  const local = host === "localhost" || host === "127.0.0.1" || host === "[::1]";
+  const maximum = local ? MAX_LOCAL_UPLOAD_BYTES : MAX_REMOTE_RELAY_UPLOAD_BYTES;
+  if (typeof size !== "number" || !Number.isSafeInteger(size) || size < 22 || size > maximum) {
+    throw new ApiError(400, "invalid_size", `fileSize must be between 22 and ${maximum} bytes.`);
   }
   const id = crypto.randomUUID();
   const key = `worlds/${worldId}/uploads/${id}.zip`;

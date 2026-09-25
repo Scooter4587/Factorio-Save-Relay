@@ -53,3 +53,13 @@ jobs:
 
       - name: Verify safe local file replacement and credentials
         run: dotnet run --project client/FactorioSaveRelay.SafetyTests/FactorioSaveRelay.SafetyTests.csproj --configuration Release
+
+      - name: Publish portable Windows test application
+        run: dotnet publish client/FactorioSaveRelay.Client/FactorioSaveRelay.Client.csproj --configuration Release --runtime win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true --output artifacts/client-test-win-x64
+
+      - name: Attach Windows test application
+        uses: actions/upload-artifact@v4
+        with:
+          name: FactorioSaveRelay-test-win-x64
+          path: artifacts/client-test-win-x64/
+          retention-days: 14

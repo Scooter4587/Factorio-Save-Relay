@@ -2,7 +2,7 @@
 
 The Worker currently implements device identities, world ownership, membership,
 one-time invitations, renewable host leases and local two-phase ZIP transfers.
-The Windows app is not yet wired to these endpoints.
+The Windows test app uses these endpoints with ZIP copies.
 
 ## Local development
 
@@ -84,8 +84,10 @@ zero before the first finalized upload.
 
 Registration currently creates one new user and one device every time. A display
 name is a label, not a login or proof of identity. Linking another device to an
-existing user, credential rotation/recovery and the Windows Credential Manager
-integration are future work. The raw device token is returned only at creation.
+existing user and credential rotation/recovery are future work. The raw device
+token is returned only at creation and the Windows app stores it in Credential
+Manager. A hosted service requires a separate `REGISTRATION_KEY` Worker secret;
+the app sends it only on registration and never persists it.
 
 Device tokens and invitation codes contain a UUID salt plus 256 random bits.
 D1 stores only SHA-256 hashes of the complete tokens. Invitation codes are opaque
@@ -155,7 +157,10 @@ condition. R2 verifies the checksum. Repeating the same PUT can return success
 for the already verified immutable object, but cannot overwrite it. A failed
 or interrupted upload never changes the world's current revision. The API caps
 this local transport at 512 MiB per ZIP; this is not a production Workers limit
-or a claim that large saves have been performance-tested.
+or a claim that large saves have been performance-tested. For a non-local
+Worker address, begin rejects ZIPs above 90,000,000 bytes before transfer. The
+interim relay transport cannot carry larger saves on a Free/Pro Cloudflare zone;
+direct-to-R2 uploads are still required for those.
 
 Finalize checks stored size/checksum and validates the ZIP32 central/local
 records, entry boundaries, decompression, uncompressed sizes and entry CRC32s.
@@ -195,9 +200,9 @@ or conflict revisions cannot be restored through this endpoint.
 
 Still pending: direct short-lived R2 transfer URLs, cleanup of abandoned uploads,
 production scheduling and automatic save detection/host workflow. The Windows
-client now supports a manual localhost-only test workflow with copies outside
-Factorio's real saves folder. Do not use this local relay transport as the
-production service.
+client supports a manual workflow with copies outside Factorio's real saves
+folder, on localhost or the limited HTTPS test service. Do not use this relay
+transport as the production service.
 
 References: [R2 integrity/conditional writes](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/)
 and [PKWARE ZIP format](https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT).
@@ -214,12 +219,13 @@ Errors use `{ "error": { "code": "...", "message": "..." } }`:
 
 ## Deployment boundary
 
-`wrangler.jsonc` remains the unprovisioned deployment configuration. Registration
-is disabled unless `ALLOW_REGISTRATION` is explicitly `"true"`; it is enabled
-only in the separate local configuration. Public deployment needs a real D1
-binding, migrations, HTTPS and a deliberate registration/access and abuse-control
-policy. Do not deploy `wrangler.local.jsonc` or treat its open local registration
-as a production onboarding policy.
+`wrangler.jsonc` remains the unprovisioned deployment configuration. The separate
+`wrangler.remote.example.jsonc` is a template for a small private test service;
+see [remote-test.md](remote-test.md). Registration requires both
+`ALLOW_REGISTRATION="true"` and the `REGISTRATION_KEY` secret on a remote URL.
+The intentionally keyless local mode works only when
+`ALLOW_INSECURE_LOCAL_REGISTRATION="true"` and the request is addressed to
+localhost. Never deploy `wrangler.local.jsonc` as a public test service.
 
 D1 batch operations provide transaction rollback as described in the
 [Cloudflare D1 documentation](https://developers.cloudflare.com/d1/worker-api/d1-database/#batch).

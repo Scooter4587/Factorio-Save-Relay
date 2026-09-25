@@ -1,7 +1,7 @@
 <Window x:Class="FactorioSaveRelay.Client.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Factorio Save Relay — local test" Width="870" Height="790"
+        Title="Factorio Save Relay — test app" Width="870" Height="790"
         MinWidth="720" MinHeight="600" WindowStartupLocation="CenterScreen" Background="#10151D">
     <Grid x:Name="RootGrid" Margin="24">
         <Grid.RowDefinitions>
@@ -11,19 +11,21 @@
         </Grid.RowDefinitions>
         <StackPanel Grid.Row="0" Margin="0,0,0,16">
             <TextBlock Text="FACTORIO SAVE RELAY" Foreground="#F2B441" FontWeight="Bold" FontSize="15" />
-            <TextBlock Text="Manual local test — select a copy outside Factorio's saves folder"
+            <TextBlock Text="Manual test — select a copy outside Factorio's saves folder"
                        Margin="0,7,0,0" Foreground="#F4F7FA" FontSize="18" TextWrapping="Wrap" />
         </StackPanel>
         <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
             <StackPanel>
-                <GroupBox Header="1. Local service and profile" Foreground="#F2B441" Padding="12" Margin="0,0,0,12">
+                <GroupBox Header="1. Service and profile" Foreground="#F2B441" Padding="12" Margin="0,0,0,12">
                     <StackPanel>
-                        <TextBlock Text="Service address (localhost only)" Foreground="#DDE5ED" />
+                        <TextBlock Text="Service address (HTTPS, or localhost for development)" Foreground="#DDE5ED" />
                         <TextBox x:Name="ServiceUrlBox" Text="http://127.0.0.1:8787" Margin="0,4,0,10" Padding="6" />
                         <TextBlock Text="Profile name — e.g. Adam or Friend" Foreground="#DDE5ED" />
                         <TextBox x:Name="ProfileBox" Text="Adam" Margin="0,4,0,10" Padding="6" />
                         <TextBlock Text="Device name" Foreground="#DDE5ED" />
                         <TextBox x:Name="DeviceNameBox" Text="My PC" Margin="0,4,0,10" Padding="6" />
+                        <TextBlock Text="Registration key for hosted service (used only when registering)" Foreground="#DDE5ED" />
+                        <PasswordBox x:Name="RegistrationKeyBox" Margin="0,4,0,10" Padding="6" />
                         <StackPanel Orientation="Horizontal">
                             <Button Content="Register new profile" Click="RegisterClick" Padding="12,7" Margin="0,0,8,0" />
                             <Button Content="Load saved profile" Click="LoadProfileClick" Padding="12,7" />

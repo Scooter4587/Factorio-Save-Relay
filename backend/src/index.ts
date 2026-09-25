@@ -1,5 +1,5 @@
 import { ApiError, json } from "./http";
-import { authenticate, register } from "./identity";
+import { authenticate, register, tokenHash } from "./identity";
 import { createInvite, createWorld, getWorld, listWorlds, redeemInvite } from "./worlds";
 import { acquireLease, changeLease } from "./leases";
 import { beginUpload, putContent, finalizeUpload, listRevisions, download, restoreRevision, cleanupRetention } from "./transfers";
@@ -7,11 +7,28 @@ import { beginUpload, putContent, finalizeUpload, listRevisions, download, resto
 interface Env {
   DB?: D1Database;
   ALLOW_REGISTRATION?: string;
+  ALLOW_INSECURE_LOCAL_REGISTRATION?: string;
+  REGISTRATION_KEY?: string;
   SAVES?: R2Bucket;
   ALLOW_LOCAL_TRANSFERS?: string;
 }
 
 const SERVICE_VERSION = "0.1.0";
+
+async function registrationAuthorized(request: Request, env: Env): Promise<boolean> {
+  if (env.REGISTRATION_KEY) {
+    const supplied = request.headers.get("x-relay-registration-key") ?? "";
+    if (supplied.length < 1 || supplied.length > 256) return false;
+    const actual = await tokenHash(supplied);
+    const expected = await tokenHash(env.REGISTRATION_KEY);
+    let difference = 0;
+    for (let i = 0; i < expected.length; i++) difference |= actual.charCodeAt(i) ^ expected.charCodeAt(i);
+    return difference === 0;
+  }
+  const host = new URL(request.url).hostname;
+  return env.ALLOW_INSECURE_LOCAL_REGISTRATION === "true"
+    && (host === "localhost" || host === "127.0.0.1" || host === "[::1]");
+}
 
 export default {
   async fetch(request, env): Promise<Response> {
@@ -45,6 +62,9 @@ export default {
       if (registration) {
         if (env.ALLOW_REGISTRATION !== "true") {
           throw new ApiError(403, "registration_disabled", "Device registration is disabled.");
+        }
+        if (!await registrationAuthorized(request, env)) {
+          throw new ApiError(403, "registration_denied", "A valid registration key is required.");
         }
         return await register(request, env.DB);
       }

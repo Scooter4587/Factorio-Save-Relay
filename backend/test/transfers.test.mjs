@@ -12,7 +12,7 @@ before(async () => {
   const built = await build({ entryPoints: ["src/index.ts"], bundle: true, write: false, format: "esm", platform: "neutral", target: "es2023" });
   mf = new Miniflare(convertV4MiniflareOptions({ modules: true, script: built.outputFiles[0].text,
     compatibilityDate: "2026-09-25", d1Databases: ["DB"], r2Buckets: ["SAVES"],
-    bindings: { ALLOW_REGISTRATION: "true", ALLOW_LOCAL_TRANSFERS: "true" } }));
+    bindings: { ALLOW_REGISTRATION: "true", ALLOW_INSECURE_LOCAL_REGISTRATION: "true", ALLOW_LOCAL_TRANSFERS: "true" } }));
   db = await mf.getD1Database("DB");
   bucket = await mf.getR2Bucket("SAVES");
   for (const file of (await readdir(new URL("../migrations/", import.meta.url))).filter(f => f.endsWith(".sql")).sort()) {
@@ -59,6 +59,18 @@ async function download(ctx, player = ctx.b, suffix = "/download") {
   return { status: response.status, bytes: Buffer.from(await response.arrayBuffer()), headers: response.headers };
 }
 const current = async ctx => (await api(ctx.base, ctx.a)).body.world.currentRevision;
+
+test("remote Worker relay rejects saves above its safe request limit before transfer", async () => {
+  const ctx = await setup();
+  const response = await mf.dispatchFetch(`https://relay.example.com${ctx.base}/uploads/begin`, {
+    method: "POST", headers: { authorization: `Bearer ${ctx.a.token}`, "content-type": "application/json" },
+    body: JSON.stringify({ baseRevision: 0, lockToken: ctx.lease.token,
+      fileSize: 90_000_001, sha256: sha(testZip()) }),
+  });
+  assert.equal(response.status, 400);
+  assert.equal((await response.json()).error.code, "invalid_size");
+  assert.equal(await current(ctx), 0);
+});
 
 test("two hosts upload and download successive byte-identical ZIP revisions", async () => {
   const ctx = await setup();

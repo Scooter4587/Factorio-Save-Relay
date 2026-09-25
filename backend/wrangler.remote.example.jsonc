@@ -1,0 +1,23 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "factorio-save-relay-test",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-25",
+  "workers_dev": true,
+  "vars": {
+    "ALLOW_REGISTRATION": "true",
+    "ALLOW_LOCAL_TRANSFERS": "true"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "factorio-save-relay-test",
+      "database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [
+    { "binding": "SAVES", "bucket_name": "factorio-save-relay-test" }
+  ],
+  "triggers": { "crons": ["0 3 * * *"] }
+}

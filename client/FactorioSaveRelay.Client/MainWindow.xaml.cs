@@ -55,11 +55,12 @@ public partial class MainWindow : Window
         if (profile.Length is < 1 or > 80) throw new InvalidOperationException("Profile name must be 1–80 characters.");
         if (CredentialStore.Load(address, profile) is not null)
             throw new InvalidOperationException("This profile already has a saved credential. Load it instead.");
-        using var registration = new RelayApi(address, "");
+        using var registration = new RelayApi(address, "", RegistrationKeyBox.Password);
         var result = await registration.JsonAsync(HttpMethod.Post, "/v1/devices/register",
             new { displayName = profile, deviceName = DeviceNameBox.Text.Trim() });
         var token = result.GetProperty("token").GetString()!;
         CredentialStore.Save(address, profile, token);
+        RegistrationKeyBox.Clear();
         _api?.Dispose();
         _api = new RelayApi(address, token);
         WorldCombo.Items.Clear(); HistoryCombo.Items.Clear(); _pending = null;

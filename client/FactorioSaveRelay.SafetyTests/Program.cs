@@ -28,6 +28,13 @@ try
         if (!result) throw new Exception(message);
     }
 
+    foreach (var insecure in new[] { "http://relay.example.com", "https://relay.example.com/other", "https://relay.example.com/?key=secret" })
+    {
+        try { using var rejected = new RelayApi(insecure, ""); throw new Exception("Unsafe service address was accepted."); }
+        catch (InvalidOperationException) { }
+    }
+    using (var accepted = new RelayApi("https://relay.example.com", "")) { }
+
     var realSave = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Factorio", "saves", "world.zip");
     try { SafeSaveFiles.CheckTestPath(realSave); throw new Exception("Real saves folder was accepted."); }
     catch (InvalidOperationException) { }

@@ -1,11 +1,14 @@
-# Windows client — local manual test
+# Windows client — manual test
 
-This .NET 10 WPF client connects only to a localhost service. It can register
+This .NET 10 WPF client connects to localhost or an HTTPS test service. It can register
 separate test profiles, create/join a shared world, acquire and renew the host
 lease, upload a selected ZIP, download the current revision and restore a
 retained revision. Credentials are stored in Windows Credential Manager under
 the current Windows user, keyed by service URL and profile name. A registration
-token is not written to the repository or displayed in the interface.
+token is not written to the repository or displayed in the interface. A hosted
+service requires a separate registration key only when creating a profile; the
+key is not saved by the app. See [the remote service guide](../backend/remote-test.md)
+when ready for a two-PC test.
 
 ## Start the local service
 
@@ -28,6 +31,13 @@ dotnet run --project client/FactorioSaveRelay.Client/FactorioSaveRelay.Client.cs
 
 Open a second client window for a second profile if you want to see both users
 at once. The service and both windows must run on the same PC for this test.
+
+To create a portable Windows test build, run `client/publish-test.ps1` from
+PowerShell at the repository root. It produces a self-contained ZIP in ignored
+`artifacts/`; copy the archive to the second Windows PC and extract it before
+running `FactorioSaveRelay.exe`. GitHub CI also attaches a short-lived Windows
+test build to each PR run. The executable is not signed or installed as a
+Windows service and must be opened manually.
 
 ## Test with copies
 
@@ -59,8 +69,9 @@ blocks further publishing on the server.
 
 **This is a manual protocol test.** The client does not launch Factorio or
 watch saves automatically. It intentionally blocks the real saves folder, and
-the service is limited to localhost. Automatic game integration, remote HTTPS,
-direct R2 uploads, recovery of lost credentials and a production installer are
+remote testing needs your own private Cloudflare service. The current remote
+Worker relay accepts only ZIPs up to 90,000,000 bytes. Automatic game
+integration, direct R2 uploads, recovery of lost credentials and a production installer are
 still pending. A ZIP can pass archive checks yet be incompatible with your
 installed Factorio version or mods. Do not treat this stage as a production
 save synchronizer.

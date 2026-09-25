@@ -72,9 +72,12 @@ application. From a Windows machine with the .NET 10 SDK:
 dotnet build client/FactorioSaveRelay.Client/FactorioSaveRelay.Client.csproj
 ```
 
-The manual localhost client is now available for testing with copies outside
-the real Factorio saves folder. See [client/README.md](client/README.md) for
-startup steps and file-safety limits.
+The manual test client works with localhost or a private HTTPS test service and
+only accepts copies outside the real Factorio saves folder. See
+[client/README.md](client/README.md) for startup steps and file-safety limits.
+The [remote service guide](backend/remote-test.md) prepares two-PC testing
+without a personal domain; it is limited to small ZIPs until direct R2 upload
+is implemented.
 
 ## Project status
 
@@ -88,6 +91,7 @@ startup steps and file-safety limits.
 - [x] Backend host lease acquisition, renewal and release (local)
 - [x] Local ZIP upload/finalize, revision history and verified transfer demo
 - [x] Manual local Windows client with verified download and local backup
+- [x] Portable Windows test build and HTTPS service connection
 - [ ] Direct R2 upload and verified download
 - [x] Backend five-revision retention and restore (local)
 - [ ] End-to-end two-device test
