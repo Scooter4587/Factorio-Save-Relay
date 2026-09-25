@@ -92,6 +92,8 @@ is implemented.
 - [x] Local ZIP upload/finalize, revision history and verified transfer demo
 - [x] Manual local Windows client with verified download and local backup
 - [x] Portable Windows test build and HTTPS service connection
+- [x] Automatic upload of stable changes to a selected test ZIP while hosting
+- [ ] Automatic download and safe integration with the selected real Factorio save
 - [ ] Direct R2 upload and verified download
 - [x] Backend five-revision retention and restore (local)
 - [ ] End-to-end two-device test

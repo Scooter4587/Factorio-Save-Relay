@@ -199,7 +199,7 @@ checks. The original revision and audit trail remain intact. Missing, deleted
 or conflict revisions cannot be restored through this endpoint.
 
 Still pending: direct short-lived R2 transfer URLs, cleanup of abandoned uploads,
-production scheduling and automatic save detection/host workflow. The Windows
+production scheduling and automatic real-save host workflow. The Windows
 client supports a manual workflow with copies outside Factorio's real saves
 folder, on localhost or the limited HTTPS test service. Do not use this relay
 transport as the production service.

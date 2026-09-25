@@ -22,12 +22,18 @@ public partial class MainWindow : Window
     private string? _leaseToken;
     private PendingDownload? _pending;
     private readonly DispatcherTimer _heartbeat = new() { Interval = TimeSpan.FromSeconds(60) };
+    private readonly DispatcherTimer _savePoll = new() { Interval = TimeSpan.FromSeconds(5) };
+    private FileSystemWatcher? _saveWatcher;
+    private (long Size, DateTime Modified)? _observedSave;
+    private volatile bool _autoUploadPending;
+    private DateTime _nextAutoAttempt;
     private bool _busy;
 
     public MainWindow()
     {
         InitializeComponent();
         _heartbeat.Tick += HeartbeatTick;
+        _savePoll.Tick += SavePollTick;
     }
 
     private RelayApi Api => _api ?? throw new InvalidOperationException("Register or load a local profile first.");
@@ -44,7 +50,12 @@ public partial class MainWindow : Window
         RootGrid.IsEnabled = false;
         try { await action(); }
         catch (Exception error) { StatusText.Text = error.Message; }
-        finally { RootGrid.IsEnabled = true; _busy = false; WorldCombo.IsEnabled = _leaseToken is null; }
+        finally
+        {
+            RootGrid.IsEnabled = true; _busy = false;
+            WorldCombo.IsEnabled = _leaseToken is null;
+            SavePathBox.IsEnabled = _leaseToken is null;
+        }
     }
 
     private async void RegisterClick(object sender, RoutedEventArgs e) => await Run(async () =>
@@ -135,6 +146,7 @@ public partial class MainWindow : Window
     {
         try
         {
+            if (_leaseToken is not null) throw new InvalidOperationException("Release the host lease before changing the selected ZIP.");
             var dialog = new SaveFileDialog { Title = "Select an existing test ZIP or a target for a downloaded copy",
                 Filter = "ZIP save (*.zip)|*.zip", DefaultExt = ".zip", AddExtension = true,
                 OverwritePrompt = false, FileName = "RelayTestCopy.zip" };
@@ -193,9 +205,54 @@ public partial class MainWindow : Window
         var acquired = await Api.JsonAsync(HttpMethod.Post, Root(World.Id) + "/lock/acquire", new { expectedRevision = revision });
         _leaseToken = acquired.GetProperty("lease").GetProperty("token").GetString();
         _heartbeat.Start();
+        StartMonitoring(file);
         WorldCombo.IsEnabled = false;
-        StatusText.Text = "Host lease acquired. Change the selected test ZIP, then upload it. The lease renews every minute.";
+        StatusText.Text = "Host lease acquired. Stable changes to this test ZIP are uploaded automatically; the lease renews every minute.";
     });
+
+    private void StartMonitoring(string file)
+    {
+        StopMonitoring();
+        _observedSave = null;
+        _autoUploadPending = true;
+        _nextAutoAttempt = DateTime.UtcNow;
+        _saveWatcher = new FileSystemWatcher(Path.GetDirectoryName(file)!, Path.GetFileName(file))
+        {
+            NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.FileName | NotifyFilters.CreationTime,
+            EnableRaisingEvents = true,
+        };
+        _saveWatcher.Changed += (_, _) => _autoUploadPending = true;
+        _saveWatcher.Created += (_, _) => _autoUploadPending = true;
+        _saveWatcher.Renamed += (_, _) => _autoUploadPending = true;
+        _saveWatcher.Error += (_, _) => _autoUploadPending = true;
+        _savePoll.Start();
+    }
+
+    private void StopMonitoring()
+    {
+        _savePoll.Stop();
+        _saveWatcher?.Dispose();
+        _saveWatcher = null;
+        _autoUploadPending = false;
+    }
+
+    private async void SavePollTick(object? sender, EventArgs e)
+    {
+        if (_leaseToken is null || _busy) return;
+        try
+        {
+            var file = new FileInfo(SavePath);
+            if (file.Exists)
+            {
+                var observed = (file.Length, file.LastWriteTimeUtc);
+                if (_observedSave != observed) { _observedSave = observed; _autoUploadPending = true; }
+            }
+            if (!_autoUploadPending || DateTime.UtcNow < _nextAutoAttempt) return;
+            _nextAutoAttempt = DateTime.UtcNow.AddSeconds(15);
+            await Run(async () => { if (await UploadSelectedAsync()) _autoUploadPending = false; });
+        }
+        catch (Exception error) { StatusText.Text = error.Message; }
+    }
 
     private async void HeartbeatTick(object? sender, EventArgs e)
     {
@@ -203,24 +260,26 @@ public partial class MainWindow : Window
         try { await _api.JsonAsync(HttpMethod.Post, Root(world.Id) + "/lock/renew", new { lockToken = _leaseToken }); }
         catch
         {
-            _leaseToken = null; _heartbeat.Stop(); WorldCombo.IsEnabled = true;
+            _leaseToken = null; _heartbeat.Stop(); StopMonitoring(); WorldCombo.IsEnabled = true; SavePathBox.IsEnabled = true;
             StatusText.Text = "Host lease was lost. Stop editing; refresh and sync before hosting again.";
         }
     }
 
     private async void UploadClick(object sender, RoutedEventArgs e) => await Run(async () =>
     {
+        if (!await UploadSelectedAsync()) throw new InvalidOperationException("The ZIP is still changing. Wait a few seconds and retry.");
+        _autoUploadPending = false;
+    });
+
+    private async Task<bool> UploadSelectedAsync()
+    {
         var lease = Lease;
-        if (SafeSaveFiles.FactorioRunning()) throw new InvalidOperationException("Close Factorio before manually uploading this test copy.");
         var file = SavePath;
         if (!File.Exists(file)) throw new InvalidOperationException("The selected test ZIP does not exist.");
-        // A stable snapshot prevents a changing source from being hashed and sent
-        // as two different byte sequences. The chosen original is never modified.
-        var snapshot = file + ".relay-upload-" + Guid.NewGuid().ToString("N");
+        var snapshot = await SafeSaveFiles.SnapshotStableAsync(file);
+        if (snapshot is null) return false;
         try
         {
-            File.Copy(file, snapshot);
-            await SafeSaveFiles.ValidateZipAsync(snapshot);
             var size = new FileInfo(snapshot).Length;
             var sha = await SafeSaveFiles.Sha256Async(snapshot);
             var world = (await Api.JsonAsync(HttpMethod.Get, Root(World.Id))).GetProperty("world");
@@ -233,7 +292,7 @@ public partial class MainWindow : Window
                 if (sha == current.GetProperty("sha256").GetString())
                 {
                     StatusText.Text = "The selected ZIP is unchanged. No new revision was created.";
-                    return;
+                    return true;
                 }
             }
             var begin = await Api.JsonAsync(HttpMethod.Post, Root(World.Id) + "/uploads/begin",
@@ -244,16 +303,20 @@ public partial class MainWindow : Window
                 new { uploadId = upload.GetProperty("id").GetString(), lockToken = lease });
             await RefreshWorldsAsync();
             StatusText.Text = $"ZIP uploaded as revision {finalized.GetProperty("revision").GetProperty("revision").GetInt64()}.";
+            return true;
         }
         finally { if (File.Exists(snapshot)) File.Delete(snapshot); }
-    });
+    }
 
     private async void ReleaseClick(object sender, RoutedEventArgs e) => await Run(async () =>
     {
         var lease = Lease;
-        _heartbeat.Stop();
-        try { await Api.JsonAsync(HttpMethod.Post, Root(World.Id) + "/lock/release", new { lockToken = lease }); }
-        finally { _leaseToken = null; WorldCombo.IsEnabled = true; }
+        if (SafeSaveFiles.FactorioRunning())
+            throw new InvalidOperationException("Close Factorio before releasing host lease, so the final save can be uploaded.");
+        if (!await UploadSelectedAsync())
+            throw new InvalidOperationException("The ZIP is still changing. Wait for the final save to finish before releasing.");
+        await Api.JsonAsync(HttpMethod.Post, Root(World.Id) + "/lock/release", new { lockToken = lease });
+        _leaseToken = null; _heartbeat.Stop(); StopMonitoring(); WorldCombo.IsEnabled = true;
         StatusText.Text = "Host lease released. The other profile can now sync and host.";
     });
 
@@ -287,6 +350,7 @@ public partial class MainWindow : Window
     protected override void OnClosed(EventArgs e)
     {
         _heartbeat.Stop();
+        StopMonitoring();
         _api?.Dispose();
         base.OnClosed(e);
     }

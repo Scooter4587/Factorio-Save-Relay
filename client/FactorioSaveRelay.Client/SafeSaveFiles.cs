@@ -74,6 +74,37 @@ internal static class SafeSaveFiles
         return Convert.ToHexString(await SHA256.HashDataAsync(input)).ToLowerInvariant();
     }
 
+    public static async Task<string?> SnapshotStableAsync(string selectedPath)
+    {
+        var source = CheckTestPath(selectedPath);
+        var before = new FileInfo(source);
+        if (!before.Exists || DateTime.UtcNow - before.LastWriteTimeUtc < TimeSpan.FromSeconds(3)) return null;
+        var snapshot = source + ".relay-upload-" + Guid.NewGuid().ToString("N");
+        try
+        {
+            File.Copy(source, snapshot);
+            var after = new FileInfo(source);
+            if (!after.Exists || after.Length != before.Length || after.LastWriteTimeUtc != before.LastWriteTimeUtc
+                || DateTime.UtcNow - after.LastWriteTimeUtc < TimeSpan.FromSeconds(3))
+            {
+                File.Delete(snapshot);
+                return null;
+            }
+            await ValidateZipAsync(snapshot);
+            return snapshot;
+        }
+        catch (IOException)
+        {
+            if (File.Exists(snapshot)) File.Delete(snapshot);
+            return null;
+        }
+        catch
+        {
+            if (File.Exists(snapshot)) File.Delete(snapshot);
+            throw;
+        }
+    }
+
     public static async Task<PendingDownload> StageAsync(HttpResponseMessage response, string target)
     {
         target = CheckTestPath(target);

@@ -42,6 +42,13 @@ try
     var original = Zip("original existing world copy");
     var next = Zip("new revision from the other player");
     await File.WriteAllBytesAsync(target, original);
+    Check(await SafeSaveFiles.SnapshotStableAsync(target) is null,
+        "A just-written ZIP was treated as stable.");
+    File.SetLastWriteTimeUtc(target, DateTime.UtcNow.AddSeconds(-10));
+    var snapshot = await SafeSaveFiles.SnapshotStableAsync(target);
+    Check(snapshot is not null, "A stable ZIP could not be copied for upload.");
+    Check((await File.ReadAllBytesAsync(snapshot!)).SequenceEqual(original), "Upload snapshot differs from the selected ZIP.");
+    File.Delete(snapshot!);
 
     using (var bad = Download(next, 2, new string('0', 64)))
     {

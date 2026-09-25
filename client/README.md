@@ -2,7 +2,8 @@
 
 This .NET 10 WPF client connects to localhost or an HTTPS test service. It can register
 separate test profiles, create/join a shared world, acquire and renew the host
-lease, upload a selected ZIP, download the current revision and restore a
+lease, upload a stable selected ZIP automatically while hosting, download the
+current revision and restore a
 retained revision. Credentials are stored in Windows Credential Manager under
 the current Windows user, keyed by service URL and profile name. A registration
 token is not written to the repository or displayed in the interface. A hosted
@@ -48,14 +49,14 @@ Windows service and must be opened manually.
 2. In the first window enter profile `Adam` and register. Create a world and
    invitation; copy the one-time code.
 3. Select an existing valid ZIP **copy** in Adam's test folder. Acquire host
-   lease, upload it and release the lease.
+   lease and wait for the automatic upload status, then release the lease.
 4. In the second window register profile `Friend`, paste the invitation and
    join. Choose a ZIP target in Friend's test folder, then download latest.
    If a target exists, its previous bytes are saved as a sibling
    `.relay-backup-*.zip` before atomic replacement.
 5. Friend can acquire the lease. After changing only the test ZIP copy to a
-   different valid archive, upload it and release. Adam can then download the
-   newer revision and keep a local backup.
+   different valid archive, wait for its automatic upload and release. Adam
+   can then download the newer revision and keep a local backup.
 
 The client checks downloaded size, SHA-256 and ZIP readability before any local
 replacement. A download is staged as a `.download-*` file in the same folder.
@@ -63,15 +64,18 @@ If Factorio is running, the file stays pending until you close the game and
 click **Apply pending download**. The client does not close or control Factorio.
 Keep the client open until applying a pending download; recovery of a pending
 file after restarting the app is not implemented yet.
-It makes a stable copy before upload, so a selected source file is never edited
-by the transfer. An active host lease renews every minute; loss of the lease
-blocks further publishing on the server.
+The client watches the selected ZIP while holding the host lease and also polls
+its size and modified time every five seconds. It waits for a stable file,
+validates a separate upload snapshot and sends only changed content. Releasing
+the lease attempts one final upload and refuses to release while Factorio is
+running or the file is changing. The selected source file is never edited by
+the transfer. An active lease renews every minute; losing it blocks publishing.
 
-**This is a manual protocol test.** The client does not launch Factorio or
-watch saves automatically. It intentionally blocks the real saves folder, and
+**This is still a test-copy workflow.** The client does not launch Factorio or
+watch the real game's save folder. It intentionally blocks that folder, and
 remote testing needs your own private Cloudflare service. The current remote
-Worker relay accepts only ZIPs up to 90,000,000 bytes. Automatic game
-integration, direct R2 uploads, recovery of lost credentials and a production installer are
+Worker relay accepts only ZIPs up to 90,000,000 bytes. Automatic download,
+real-game integration, direct R2 uploads, recovery of lost credentials and a production installer are
 still pending. A ZIP can pass archive checks yet be incompatible with your
 installed Factorio version or mods. Do not treat this stage as a production
 save synchronizer.
