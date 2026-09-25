@@ -50,12 +50,17 @@ Requirements: Node.js 22 or newer and a Cloudflare account for remote deployment
 cd backend
 npm install
 npm run check
+npm test
+npm run db:migrate:local
 npm run dev
 ```
 
-The local health endpoint is `GET /health`. Cloudflare bindings are deliberately
-not configured yet; D1 and R2 identifiers will be added only after the resources
-are provisioned.
+The local health endpoint is `GET /health`. Local development uses a separate
+configuration and local D1 database; no Cloudflare account or domain is needed.
+With the server running, `npm run demo:local` verifies that two users can share a
+world through a one-time invitation. See [backend/README.md](backend/README.md)
+for the API contract and testing instructions. Remote D1 and R2 resources are
+not provisioned yet.
 
 ## Windows client development
 
@@ -72,8 +77,9 @@ dotnet build client/FactorioSaveRelay.Client/FactorioSaveRelay.Client.csproj
 - [x] API health endpoint
 - [x] Initial D1 schema
 - [x] Windows client shell
-- [ ] Device registration and authentication
-- [ ] World creation and invitation flow
+- [x] Backend device registration and authentication (local)
+- [x] Backend world creation and invitation flow (local)
+- [ ] Windows client registration and secure credential storage
 - [ ] Host lease acquisition and renewal
 - [ ] Direct R2 upload and verified download
 - [ ] Five-revision retention and restore

@@ -31,6 +31,9 @@ jobs:
       - name: Type-check
         run: npm run check
 
+      - name: Test identities, membership and invitations
+        run: npm test
+
       - name: Validate Worker bundle
         run: npm run deploy:dry
 
