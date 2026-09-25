@@ -8,10 +8,16 @@ interface World {
   currentRevision: number;
   role: "owner" | "member";
   createdAt: string;
+  hostDeviceId: string | null;
+  hostLeaseExpiresAt: string | null;
 }
 
 const WORLD_SELECT = `SELECT w.id, w.name, w.owner_user_id AS ownerUserId,
-  w.current_revision AS currentRevision, m.role, w.created_at AS createdAt
+  w.current_revision AS currentRevision, m.role, w.created_at AS createdAt,
+  CASE WHEN w.lock_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+    THEN w.locked_by_device_id ELSE NULL END AS hostDeviceId,
+  CASE WHEN w.lock_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+    THEN w.lock_expires_at ELSE NULL END AS hostLeaseExpiresAt
   FROM worlds w JOIN world_members m ON m.world_id = w.id`;
 
 export async function getWorld(db: D1Database, worldId: string, userId: string): Promise<World> {

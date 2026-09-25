@@ -1,7 +1,7 @@
 # Backend
 
-The Worker currently implements device identities, world ownership, membership
-and one-time invitations. Save transfers and host leases are not implemented yet.
+The Worker currently implements device identities, world ownership, membership,
+one-time invitations and renewable host leases. Save transfers are not implemented yet.
 
 ## Local development
 
@@ -25,7 +25,9 @@ npm run demo:local
 ```
 
 The demo registers two disposable users, creates a world, redeems an invitation
-and checks that both users see the same world. Each run creates new local data.
+and checks that both users see the same world. It then acquires Adam's host lease,
+checks that the friend is blocked, renews and releases it, and hands hosting to
+the friend. Each run creates new local data.
 It never prints or saves the raw credentials and does not touch Factorio saves.
 
 ## Validation
@@ -39,7 +41,8 @@ npm run deploy:dry
 Tests bundle the real Worker and run HTTP requests against Miniflare with a fresh
 temporary D1 database initialized from the migration. They cover permissions,
 revoked credentials, expired/reused invitations, concurrent redemption, input
-validation and transaction rollback. No remote bindings or credentials are used.
+validation, transaction rollback, concurrent host claims and expired/stale leases.
+No remote bindings or credentials are used.
 Miniflare and esbuild are pinned to the versions already used by Wrangler.
 
 ## API contract
@@ -61,9 +64,14 @@ by the server, never trusted from request fields.
 | GET | `/v1/worlds/{id}` | none | `{ world }`, members only |
 | POST | `/v1/worlds/{id}/invites` | none | 201: `{ invite: { id, worldId, code, expiresAt } }`, owner only |
 | POST | `/v1/invites/redeem` | `{ "code": "<invite-code>" }` | `{ world }`, caller becomes member |
+| POST | `/v1/worlds/{id}/lock/acquire` | `{ "expectedRevision": 0 }` | 201: `{ lease }`, world members only |
+| POST | `/v1/worlds/{id}/lock/renew` | `{ "lockToken": "<lease-token>" }` | `{ lease }`, owning device/session only |
+| POST | `/v1/worlds/{id}/lock/release` | `{ "lockToken": "<lease-token>" }` | `{ released: true, worldId }` |
 
 A `world` contains `id`, `name`, `ownerUserId`, `currentRevision`, caller's `role`
-and `createdAt`. Revision is zero until save transfers are implemented.
+and `createdAt`, plus `hostDeviceId` and `hostLeaseExpiresAt`. The host fields
+are null when no active lease exists; no lease secret is exposed. Revision is
+zero until save transfers are implemented.
 
 Registration currently creates one new user and one device every time. A display
 name is a label, not a login or proof of identity. Linking another device to an
@@ -78,6 +86,36 @@ can create them. A successful redemption consumes the invitation and creates the
 membership in one D1 transaction. Only one concurrent redemption can succeed.
 Existing members cannot consume a new invitation; replaying an old invitation
 cannot restore a removed membership.
+
+## Host leases
+
+Acquisition atomically checks membership, the current revision and whether an
+existing lease is still active. `expectedRevision` must be a non-negative safe
+integer. Clients must download/verify the current revision before acquisition;
+if a competing revision is published in between, acquisition fails and the
+client must refresh before trying again. The API revision check is not proof
+that a client has downloaded the save; that validation belongs in the client.
+
+A lease contains `worldId`, `deviceId`, `expiresAt`, `ttlSeconds` (180), and
+`renewAfterSeconds` (60). Acquisition additionally returns `token` once. Renewal
+extends expiry from database time and does not return the token again. Store the
+token for that host session; losing it means waiting for expiry before acquiring
+another lease. Even the current device cannot acquire a second active lease.
+
+Renew/release require both the owning device credential and the current lease
+token. Expired leases cannot be renewed or released; a new acquisition generates
+a new secret, so delayed requests from the previous session cannot alter it.
+Only the token hash is stored in D1. Expiry uses database time, not PC clocks.
+Normal release clears all lock fields. Expired rows can remain in storage but
+are reported as inactive and can be replaced by the next valid acquisition.
+
+Acquisition returns 409 `lease_unavailable` for an occupied world or revision
+mismatch. Renewal/release return 409 `lease_lost` when the lease no longer belongs
+to that active device/session. The client must stop publishing on lease loss;
+the future upload/finalize endpoints must independently enforce that rule.
+This API does not prevent someone manually starting Factorio outside the client.
+Membership removal or device revocation blocks subsequent lease operations;
+the outstanding lease expires naturally. Force-unlock is not implemented yet.
 
 Errors use `{ "error": { "code": "...", "message": "..." } }`:
 

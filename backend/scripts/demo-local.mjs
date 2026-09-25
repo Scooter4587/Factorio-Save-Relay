@@ -9,7 +9,11 @@ async function api(path, method = "GET", body, token) {
     body: body ? JSON.stringify(body) : undefined,
   });
   const result = await response.json();
-  if (!response.ok) throw new Error(`${method} ${path}: ${response.status} ${result.error?.code}`);
+  if (!response.ok) {
+    const error = new Error(`${method} ${path}: ${response.status} ${result.error?.code}`);
+    error.status = response.status;
+    throw error;
+  }
   return result;
 }
 const adam = await api("/v1/devices/register", "POST", { displayName: "Demo Adam", deviceName: "Demo Adam PC" });
@@ -23,4 +27,15 @@ for (const player of [adam, friend]) {
 }
 console.log("PASS: Two local users share the same world through a one-time invitation.");
 console.log(`World: ${world.id}; owner: Demo Adam; member: Demo Friend; revision: 0.`);
+const lockPath = `/v1/worlds/${world.id}/lock`;
+const { lease } = await api(`${lockPath}/acquire`, "POST", { expectedRevision: 0 }, adam.token);
+try {
+  await assert.rejects(api(`${lockPath}/acquire`, "POST", { expectedRevision: 0 }, friend.token), { status: 409 });
+  await api(`${lockPath}/renew`, "POST", { lockToken: lease.token }, adam.token);
+} finally {
+  await api(`${lockPath}/release`, "POST", { lockToken: lease.token }, adam.token);
+}
+const { lease: friendLease } = await api(`${lockPath}/acquire`, "POST", { expectedRevision: 0 }, friend.token);
+await api(`${lockPath}/release`, "POST", { lockToken: friendLease.token }, friend.token);
+console.log("PASS: Adam hosts exclusively, renews and releases; Friend then takes over.");
 console.log("No save files were transferred. Demo credentials are not printed or persisted by this script.");

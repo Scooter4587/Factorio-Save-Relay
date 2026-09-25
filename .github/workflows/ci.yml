@@ -31,7 +31,7 @@ jobs:
       - name: Type-check
         run: npm run check
 
-      - name: Test identities, membership and invitations
+      - name: Test identities, membership, invitations and host leases
         run: npm test
 
       - name: Validate Worker bundle

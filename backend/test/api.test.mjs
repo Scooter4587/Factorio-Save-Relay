@@ -48,6 +48,14 @@ async function invite(owner, worldId) {
   return response.body.invite;
 }
 const redeem = (player, code) => api("/v1/invites/redeem", { method: "POST", token: player.token, body: { code } });
+const lock = (player, id, action, body) => api(`/v1/worlds/${id}/lock/${action}`, { method: "POST", token: player.token, body });
+async function pair() {
+  const owner = await register("Lease Owner");
+  const member = await register("Lease Member");
+  const shared = await world(owner);
+  await redeem(member, (await invite(owner, shared.id)).code);
+  return { owner, member, shared };
+}
 
 test("health/version remain public; unknown routes return JSON 404", async () => {
   assert.equal((await api("/health")).body.status, "ok");
@@ -254,4 +262,127 @@ test("registration is off by default and missing DB returns a controlled 503", a
   } finally {
     await Promise.all([closed.dispose(), unconfigured.dispose()]);
   }
+});
+
+test("lease acquisition, renewal, release and host handoff", async () => {
+  const { owner, member, shared } = await pair();
+  assert.equal(shared.hostDeviceId, null);
+  const acquired = await lock(owner, shared.id, "acquire", { expectedRevision: 0 });
+  assert.equal(acquired.status, 201);
+  const lease = acquired.body.lease;
+  assert.equal(lease.deviceId, owner.device.id);
+  assert.equal(lease.ttlSeconds, 180);
+  assert.equal(lease.renewAfterSeconds, 60);
+  assert.ok(Math.abs(Date.parse(lease.expiresAt) - Date.now() - 180_000) < 10_000);
+  const visible = (await api(`/v1/worlds/${shared.id}`, { token: member.token })).body.world;
+  assert.equal(visible.hostDeviceId, owner.device.id);
+  assert.equal(visible.hostLeaseExpiresAt, lease.expiresAt);
+  assert.ok(!JSON.stringify(visible).includes(lease.token));
+  const stored = await db.prepare("SELECT lock_token_hash FROM worlds WHERE id = ?").bind(shared.id).first();
+  assert.match(stored.lock_token_hash, /^[a-f0-9]{64}$/);
+  assert.notEqual(stored.lock_token_hash, lease.token);
+  // Shorten the lease to prove renewal actually extends it without sleeping.
+  await db.prepare("UPDATE worlds SET lock_expires_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+30 seconds') WHERE id = ?").bind(shared.id).run();
+  const renewed = await lock(owner, shared.id, "renew", { lockToken: lease.token });
+  assert.equal(renewed.status, 200);
+  assert.ok(Date.parse(renewed.body.lease.expiresAt) > Date.now() + 150_000);
+  assert.equal(renewed.body.lease.token, undefined);
+  assert.equal((await lock(owner, shared.id, "release", { lockToken: lease.token })).status, 200);
+  const released = await db.prepare("SELECT locked_by_device_id, lock_token_hash, lock_expires_at FROM worlds WHERE id = ?").bind(shared.id).first();
+  assert.deepEqual(released, { locked_by_device_id: null, lock_token_hash: null, lock_expires_at: null });
+  assert.equal((await lock(member, shared.id, "acquire", { expectedRevision: 0 })).status, 201);
+});
+
+test("simultaneous host claims have one winner and active leases cannot be reacquired", async () => {
+  const { owner, member, shared } = await pair();
+  const results = await Promise.all([lock(owner, shared.id, "acquire", { expectedRevision: 0 }), lock(member, shared.id, "acquire", { expectedRevision: 0 })]);
+  assert.deepEqual(results.map((r) => r.status).sort(), [201, 409]);
+  const winner = results[0].status === 201 ? owner : member;
+  const winningLease = results.find((r) => r.status === 201).body.lease;
+  assert.equal((await lock(winner, shared.id, "acquire", { expectedRevision: 0 })).status, 409);
+  assert.equal((await lock(winner, shared.id, "renew", { lockToken: winningLease.token })).status, 200);
+});
+
+test("stale or future revision cannot acquire a lease", async () => {
+  const { owner, shared } = await pair();
+  await db.prepare("UPDATE worlds SET current_revision = 4 WHERE id = ?").bind(shared.id).run();
+  for (const expectedRevision of [0, 3, 5]) {
+    assert.equal((await lock(owner, shared.id, "acquire", { expectedRevision })).status, 409);
+  }
+  assert.equal((await lock(owner, shared.id, "acquire", { expectedRevision: 4 })).status, 201);
+});
+
+test("wrong device or secret cannot renew or release another session", async () => {
+  const { owner, member, shared } = await pair();
+  const lease = (await lock(owner, shared.id, "acquire", { expectedRevision: 0 })).body.lease;
+  const other = await world(owner, "Other world");
+  const otherLease = (await lock(owner, other.id, "acquire", { expectedRevision: 0 })).body.lease;
+  for (const action of ["renew", "release"]) {
+    assert.equal((await lock(member, shared.id, action, { lockToken: lease.token, deviceId: owner.device.id })).status, 409);
+    assert.equal((await lock(owner, shared.id, action, { lockToken: otherLease.token })).status, 409);
+    assert.equal((await lock(owner, shared.id, action, { lockToken: owner.token })).status, 400);
+  }
+  assert.equal((await lock(owner, shared.id, "renew", { lockToken: lease.token })).status, 200);
+});
+
+test("even another device belonging to the same user cannot operate the lease", async () => {
+  const { owner, member, shared } = await pair();
+  const lease = (await lock(owner, shared.id, "acquire", { expectedRevision: 0 })).body.lease;
+  await db.prepare("UPDATE devices SET user_id = ? WHERE id = ?").bind(owner.user.id, member.device.id).run();
+  for (const action of ["renew", "release"]) {
+    assert.equal((await lock(member, shared.id, action, { lockToken: lease.token })).status, 409);
+  }
+});
+
+test("expired lease is hidden, cannot be renewed, and permits a new host", async () => {
+  const { owner, member, shared } = await pair();
+  const old = (await lock(owner, shared.id, "acquire", { expectedRevision: 0 })).body.lease;
+  await db.prepare("UPDATE worlds SET lock_expires_at = '2000-01-01T00:00:00.000Z' WHERE id = ?").bind(shared.id).run();
+  const visible = (await api(`/v1/worlds/${shared.id}`, { token: member.token })).body.world;
+  assert.equal(visible.hostDeviceId, null);
+  assert.equal(visible.hostLeaseExpiresAt, null);
+  assert.equal((await lock(owner, shared.id, "renew", { lockToken: old.token })).status, 409);
+  const takeover = await lock(member, shared.id, "acquire", { expectedRevision: 0 });
+  assert.equal(takeover.status, 201);
+  assert.equal((await lock(owner, shared.id, "release", { lockToken: old.token })).status, 409);
+  assert.equal((await lock(member, shared.id, "renew", { lockToken: takeover.body.lease.token })).status, 200);
+});
+
+test("same-device reacquisition rotates the secret and fences out the old session", async () => {
+  const { owner, shared } = await pair();
+  const old = (await lock(owner, shared.id, "acquire", { expectedRevision: 0 })).body.lease;
+  await db.prepare("UPDATE worlds SET lock_expires_at = '2000-01-01T00:00:00.000Z' WHERE id = ?").bind(shared.id).run();
+  const current = (await lock(owner, shared.id, "acquire", { expectedRevision: 0 })).body.lease;
+  assert.notEqual(old.token, current.token);
+  for (const action of ["renew", "release"]) {
+    assert.equal((await lock(owner, shared.id, action, { lockToken: old.token })).status, 409);
+  }
+  assert.equal((await lock(owner, shared.id, "release", { lockToken: current.token })).status, 200);
+  assert.equal((await lock(owner, shared.id, "release", { lockToken: current.token })).status, 409);
+});
+
+test("outsiders, removed members and revoked devices cannot operate leases", async () => {
+  const { owner, member, shared } = await pair();
+  const outsider = await register();
+  const lease = (await lock(member, shared.id, "acquire", { expectedRevision: 0 })).body.lease;
+  await db.prepare("DELETE FROM world_members WHERE world_id = ? AND user_id = ?").bind(shared.id, member.user.id).run();
+  for (const action of ["acquire", "renew", "release"]) {
+    const body = { expectedRevision: 0, lockToken: lease.token };
+    assert.equal((await lock(outsider, shared.id, action, body)).status, 404);
+    assert.equal((await lock(member, shared.id, action, body)).status, 404);
+  }
+  await db.prepare("UPDATE devices SET revoked_at = CURRENT_TIMESTAMP WHERE id = ?").bind(owner.device.id).run();
+  assert.equal((await lock(owner, shared.id, "acquire", { expectedRevision: 0 })).status, 401);
+});
+
+test("invalid revision and lease bodies never create a lease", async () => {
+  const { owner, shared } = await pair();
+  for (const expectedRevision of [undefined, null, "0", -1, 0.5, Number.MAX_SAFE_INTEGER + 1]) {
+    assert.equal((await lock(owner, shared.id, "acquire", { expectedRevision })).status, 400);
+  }
+  for (const lockToken of [undefined, null, "", "wrong"]) {
+    assert.equal((await lock(owner, shared.id, "renew", { lockToken })).status, 400);
+  }
+  assert.equal((await api(`/v1/worlds/${shared.id}`, { token: owner.token })).body.world.hostDeviceId, null);
+  assert.equal((await api(`/v1/worlds/${shared.id}/lock/acquire`)).status, 404);
 });

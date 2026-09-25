@@ -80,7 +80,7 @@ dotnet build client/FactorioSaveRelay.Client/FactorioSaveRelay.Client.csproj
 - [x] Backend device registration and authentication (local)
 - [x] Backend world creation and invitation flow (local)
 - [ ] Windows client registration and secure credential storage
-- [ ] Host lease acquisition and renewal
+- [x] Backend host lease acquisition, renewal and release (local)
 - [ ] Direct R2 upload and verified download
 - [ ] Five-revision retention and restore
 - [ ] End-to-end two-device test

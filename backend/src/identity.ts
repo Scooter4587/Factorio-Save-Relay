@@ -15,12 +15,12 @@ export async function tokenHash(token: string): Promise<string> {
   return Array.from(new Uint8Array(hash), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-export function newToken(kind: "device" | "invite", id: string): string {
+export function newToken(kind: "device" | "invite" | "lease", id: string): string {
   const secret = Array.from(crypto.getRandomValues(new Uint8Array(32)), (byte) => byte.toString(16).padStart(2, "0")).join("");
   return `fsr_${kind}.${id}.${secret}`;
 }
 
-export function validToken(token: string, kind: "device" | "invite"): boolean {
+export function validToken(token: string, kind: "device" | "invite" | "lease"): boolean {
   return new RegExp(`^fsr_${kind}\\.${UUID}\\.[0-9a-f]{64}$`).test(token);
 }
 
