@@ -72,6 +72,68 @@ test("remote Worker relay rejects saves above its safe request limit before tran
   assert.equal(await current(ctx), 0);
 });
 
+test("concurrent upload reservations cannot exceed the private bucket's 1 GB safety budget", async () => {
+  const ctx = await setup();
+  try {
+    const body = { baseRevision: 0, lockToken: ctx.lease.token,
+      fileSize: 400_000_000, sha256: sha(testZip()) };
+    const attempts = await Promise.all(Array.from({ length: 3 }, () => api(`${ctx.base}/uploads/begin`, ctx.a, body)));
+    assert.deepEqual(attempts.map(r => r.status).sort(), [201, 201, 507]);
+    assert.equal(attempts.find(r => r.status === 507).body.error.code, "storage_limit_reached");
+    const { results } = await db.prepare("SELECT file_size_bytes FROM revisions WHERE world_id = ?")
+      .bind(ctx.world.id).all();
+    assert.equal(results.reduce((sum, row) => sum + row.file_size_bytes, 0), 800_000_000);
+    assert.equal(await current(ctx), 0);
+  } finally {
+    await db.prepare("DELETE FROM revisions WHERE world_id = ?").bind(ctx.world.id).run();
+  }
+});
+
+test("monthly R2 operation budgets stop reads and writes before touching the bucket", async () => {
+  const ctx = await setup();
+  const first = await begin(ctx); await put(ctx, first); await finish(ctx, first);
+  const prior = await db.prepare("SELECT period, class_a, class_b FROM r2_operation_budget ORDER BY period DESC LIMIT 1").first();
+  try {
+    await db.prepare("UPDATE r2_operation_budget SET class_b = 500000 WHERE period = ?").bind(prior.period).run();
+    const blockedRead = await api(`${ctx.base}/download`, ctx.b);
+    assert.equal(blockedRead.status, 503);
+    assert.equal(blockedRead.body.error.code, "cost_limit_reached");
+    await db.prepare("UPDATE r2_operation_budget SET class_b = 0, class_a = 10000 WHERE period = ?").bind(prior.period).run();
+    const next = await begin(ctx, testZip(), first.revision);
+    const blockedWrite = await put(ctx, next);
+    assert.equal(blockedWrite.status, 503);
+    assert.equal(blockedWrite.body.error.code, "cost_limit_reached");
+    const row = await db.prepare("SELECT object_key FROM revisions WHERE id = ?").bind(next.id).first();
+    assert.equal(await bucket.head(row.object_key), null);
+    assert.equal(await current(ctx), first.revision);
+  } finally {
+    await db.prepare("UPDATE r2_operation_budget SET class_a = ?, class_b = ? WHERE period = ?")
+      .bind(prior.class_a, prior.class_b, prior.period).run();
+  }
+});
+
+test("owner restore cannot bypass the reserved storage budget", async () => {
+  const ctx = await setup();
+  const bytes = testZip();
+  const first = await begin(ctx, bytes); await put(ctx, first, bytes); await finish(ctx, first);
+  const pendingSize = 1_000_000_000 - 2 * bytes.length + 1;
+  const pendingId = `budget-${ctx.world.id}`;
+  await db.prepare(`INSERT INTO revisions (id, world_id, revision_number, base_revision_number,
+    object_key, sha256, file_size_bytes, uploaded_by_device_id)
+    VALUES (?, ?, 2, 1, ?, ?, ?, ?)`).bind(pendingId, ctx.world.id,
+      `worlds/${ctx.world.id}/uploads/budget.zip`, sha(bytes), pendingSize, ctx.a.device.id).run();
+  try {
+    const response = await api(`${ctx.base}/revisions/${first.revision}/restore`, ctx.a,
+      { expectedRevision: first.revision, lockToken: ctx.lease.token });
+    assert.equal(response.status, 507);
+    assert.equal(response.body.error.code, "storage_limit_reached");
+    assert.equal(await current(ctx), first.revision);
+    assert.deepEqual((await download(ctx)).bytes, bytes);
+  } finally {
+    await db.prepare("DELETE FROM revisions WHERE id = ?").bind(pendingId).run();
+  }
+});
+
 test("two hosts upload and download successive byte-identical ZIP revisions", async () => {
   const ctx = await setup();
   assert.equal((await download(ctx)).status, 404);

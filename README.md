@@ -60,8 +60,9 @@ configuration and local D1 database; no Cloudflare account or domain is needed.
 With the server running, `npm run demo:local` verifies that two users can share a
 world through a one-time invitation. `npm run demo:transfer` sends synthetic ZIP
 revisions in both directions using two fresh test directories. See
-[backend/README.md](backend/README.md) for the API contract. Remote D1 and R2
-resources are not provisioned yet.
+[backend/README.md](backend/README.md) for the API contract. Remote deployment
+requires separate D1 and private R2 resources; GitHub updates alone do not
+deploy the Worker.
 
 ## Windows client development
 

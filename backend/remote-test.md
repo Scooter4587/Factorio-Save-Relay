@@ -6,12 +6,37 @@ use the only copy of an existing world. The current Worker relay accepts at
 most 90,000,000-byte ZIPs remotely; larger saves need direct R2 upload. The
 app does not yet watch or replace the live game save.
 
+## Cost limits for this test service
+
+Keep the bucket **private** and in the **Standard** storage class, and keep the
+Workers plan on **Free**. The Worker reserves the declared size of every pending
+upload and restore before writing to R2. It rejects new reservations once all
+non-deleted revisions would exceed **1,000,000,000 bytes (1 GB)** across the
+entire service. It also stops this Worker's R2 operations at 10,000 Class A and
+500,000 Class B reservations per UTC calendar month. Failed operations still
+consume a reservation, so the limits fail closed. They are intentionally far
+below R2 Standard's monthly free allowances.
+
+These are **application limits, not a Cloudflare account spending cap**. R2's
+free storage allowance is 10 GB-month, not a hard 10 GB bucket limit; Class A
+and B operations have separate free allowances. Cloudflare budget alerts notify
+after spending begins and do not stop usage. The guards only cover objects and
+operations made through this Worker. Dashboard uploads, other API credentials,
+other R2 buckets, future direct-to-R2 uploads, pricing changes or a Workers plan
+upgrade are outside them. Do not create R2 API tokens or enable public bucket
+access for this test. Check Cloudflare's Billable Usage dashboard during testing.
+If a strict account-wide guarantee of a $0 invoice is required, do not deploy
+the remote test service: Cloudflare does not provide that guarantee through
+these application limits.
+See Cloudflare's [R2 pricing](https://developers.cloudflare.com/r2/pricing/)
+and [budget alert behavior](https://developers.cloudflare.com/billing/manage/budget-alerts/).
+
 1. Install Node.js 22+, open PowerShell in `backend/`, run `npm ci` and
    `npx wrangler login` with your Cloudflare account. Do this yourself; do
    not share Cloudflare credentials or API tokens.
 2. Run `npx wrangler d1 create factorio-save-relay-test` and
    `npx wrangler r2 bucket create factorio-save-relay-test`. Keep the R2 bucket
-   private; leave public `r2.dev` access disabled.
+   private and Standard; leave public `r2.dev` access disabled.
 3. Copy `wrangler.remote.example.jsonc` to `wrangler.remote.jsonc` and replace
    `REPLACE_WITH_YOUR_D1_DATABASE_ID` with the ID from step 2. The real config
    file is ignored by Git. If you chose another bucket/database name, update

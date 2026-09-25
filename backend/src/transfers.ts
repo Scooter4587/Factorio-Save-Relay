@@ -2,6 +2,7 @@ import { validateZip } from "./zip";
 import { ApiError, json, readBody, textField } from "./http";
 import { tokenHash, validToken, type Identity } from "./identity";
 import { getWorld } from "./worlds";
+import { storageBudgetAllows, storageBudgetExceeded } from "./cost-guard";
 
 // This bounded relay transport is for local development only. Production will
 // use short-lived direct R2 URLs rather than routing large saves through Workers.
@@ -79,10 +80,16 @@ export async function beginUpload(request: Request, db: D1Database, worldId: str
     FROM worlds w WHERE w.id = ? AND w.current_revision = ?
       AND w.locked_by_device_id = ? AND w.lock_token_hash = ? AND w.lock_expires_at > ${NOW}
       AND EXISTS (SELECT 1 FROM world_members WHERE world_id = w.id AND user_id = ?)
+      AND ${storageBudgetAllows(size)}
     RETURNING *
   `).bind(id, baseRevision, key, sha256, size, identity.deviceId, hash, worldId, baseRevision,
     identity.deviceId, hash, identity.userId).first<Revision>();
-  if (!upload) throw new ApiError(409, "upload_not_allowed", "An active host lease at the current revision is required.");
+  if (!upload) {
+    if (await storageBudgetExceeded(db, size)) {
+      throw new ApiError(507, "storage_limit_reached", "The private test service has reached its storage limit.");
+    }
+    throw new ApiError(409, "upload_not_allowed", "An active host lease at the current revision is required.");
+  }
   return json({ upload: { ...publicRevision(upload), expiresAt: upload.upload_expires_at,
     contentPath: `/v1/worlds/${worldId}/uploads/${id}/content` } }, 201);
 }
@@ -121,7 +128,8 @@ export async function putContent(request: Request, db: D1Database, bucket: R2Buc
       onlyIf: { etagDoesNotMatch: "*" },
       httpMetadata: { contentType: "application/zip", cacheControl: "no-store" },
     });
-  } catch {
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
     // R2 validates the supplied checksum while streaming. A rejected or interrupted
     // PUT cannot publish a revision; a retry uses the same immutable object key.
     throw new ApiError(422, "upload_rejected", "Storage rejected the upload. Check the file hash and retry.");
@@ -229,11 +237,15 @@ export async function restoreRevision(request: Request, db: D1Database, bucket: 
       AND w.locked_by_device_id = ? AND w.lock_token_hash = ? AND w.lock_expires_at > ${NOW}
       AND EXISTS (SELECT 1 FROM world_members WHERE world_id = w.id AND user_id = ? AND role = 'owner')
       AND EXISTS (SELECT 1 FROM revisions WHERE id = ? AND status IN ('current', 'archived'))
+      AND ${storageBudgetAllows(source.file_size_bytes)}
     RETURNING id
   `).bind(id, expectedRevision, key, source.sha256, source.file_size_bytes, identity.deviceId,
     hash, worldId, expectedRevision, identity.deviceId, hash, identity.userId, source.id).first<{ id: string }>();
   if (!reserved) {
     await original!.body.cancel();
+    if (await storageBudgetExceeded(db, source.file_size_bytes)) {
+      throw new ApiError(507, "storage_limit_reached", "The private test service has reached its storage limit.");
+    }
     throw new ApiError(409, "restore_not_allowed", "An owner host lease at the current revision is required.");
   }
   try {

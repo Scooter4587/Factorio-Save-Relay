@@ -3,6 +3,7 @@ import { authenticate, register, tokenHash } from "./identity";
 import { createInvite, createWorld, getWorld, listWorlds, redeemInvite } from "./worlds";
 import { acquireLease, changeLease } from "./leases";
 import { beginUpload, putContent, finalizeUpload, listRevisions, download, restoreRevision, cleanupRetention } from "./transfers";
+import { meteredBucket } from "./cost-guard";
 
 interface Env {
   DB?: D1Database;
@@ -72,19 +73,20 @@ export default {
       if (transfer) {
         if (env.ALLOW_LOCAL_TRANSFERS !== "true") throw new ApiError(503, "transfers_disabled", "Local transfer transport is disabled.");
         if (!env.SAVES) throw new ApiError(503, "storage_unavailable", "Save storage is not configured.");
+        const saves = meteredBucket(env.DB, env.SAVES);
         if (uploadMatch) return uploadMatch[2] === "begin"
           ? await beginUpload(request, env.DB, uploadMatch[1]!, identity)
-          : await finalizeUpload(request, env.DB, env.SAVES, uploadMatch[1]!, identity);
-        if (contentMatch) return await putContent(request, env.DB, env.SAVES, contentMatch[1]!, contentMatch[2]!, identity);
+          : await finalizeUpload(request, env.DB, saves, uploadMatch[1]!, identity);
+        if (contentMatch) return await putContent(request, env.DB, saves, contentMatch[1]!, contentMatch[2]!, identity);
         if (historyMatch) return await listRevisions(env.DB, historyMatch[1]!, identity);
         if (restoreMatch) {
           const revision = Number(restoreMatch[2]);
           if (!Number.isSafeInteger(revision)) throw new ApiError(400, "invalid_revision", "Invalid revision number.");
-          return await restoreRevision(request, env.DB, env.SAVES, restoreMatch[1]!, revision, identity);
+          return await restoreRevision(request, env.DB, saves, restoreMatch[1]!, revision, identity);
         }
         const revision = downloadMatch![2] === undefined ? undefined : Number(downloadMatch![2]);
         if (revision !== undefined && !Number.isSafeInteger(revision)) throw new ApiError(400, "invalid_revision", "Invalid revision number.");
-        return await download(env.DB, env.SAVES, downloadMatch![1]!, identity, revision);
+        return await download(env.DB, saves, downloadMatch![1]!, identity, revision);
       }
       if (pathname === "/v1/me") return json({ identity });
       if (pathname === "/v1/worlds") {

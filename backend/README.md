@@ -204,6 +204,14 @@ client supports a manual workflow with copies outside Factorio's real saves
 folder, on localhost or the limited HTTPS test service. Do not use this relay
 transport as the production service.
 
+The private test service has application-level cost guards: at most 1 GB of
+reserved non-deleted revision bytes and monthly ceilings of 10,000 R2 Class A
+and 500,000 Class B operations through this Worker. Upload and restore
+reservations are atomic across worlds; R2 reads and writes reserve an operation
+in D1 before accessing the bucket. These limits do not cover other access to
+the Cloudflare account and are not a guarantee against an invoice. See
+[remote-test.md](remote-test.md) before remote deployment.
+
 References: [R2 integrity/conditional writes](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/)
 and [PKWARE ZIP format](https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT).
 
