@@ -141,6 +141,7 @@ endpoints are disabled by default in the deployment configuration.
 | GET | `/v1/worlds/{id}/download` | Current finalized ZIP; 404 before the first upload |
 | GET | `/v1/worlds/{id}/revisions` | `{ revisions }`, newest 100 finalized/conflict records |
 | GET | `/v1/worlds/{id}/revisions/{number}/download` | Explicit archived or conflict download for world members |
+| POST | `/v1/worlds/{id}/revisions/{number}/restore` | `{ expectedRevision, lockToken }` -> 201 `{ revision, restoredFromRevision }`, owner only |
 
 All requests require the device bearer credential. Begin and content upload
 require an active lease at the current base revision. Begin reserves a unique
@@ -179,10 +180,24 @@ replacing any local file. Incomplete uploads never appear as downloadable
 revisions. Storage loss/integrity mismatch returns 503; bad uploaded bytes or
 invalid archives return 422; mismatched size headers return 400.
 
-Still pending: direct short-lived R2 transfer URLs, retention of five finalized
-versions, restore, abandoned-upload cleanup and the Windows client's game-process
-guard, local backup and atomic replacement workflow. Nothing is deleted by this
-prototype. Do not use this local relay transport as the production service.
+Each successful finalize retains the current revision plus the four newest
+archived revisions. Older finalized records are first marked `pending_delete`;
+only then are their R2 objects deleted and records marked `deleted`. A deletion
+failure leaves the record pending for the next cleanup call. Conflicts are
+preserved separately. The cleanup handler can also be scheduled after remote
+resources are provisioned; there is no production cron or binding yet.
+
+Restore requires the owner's active host lease and the expected current
+revision. It copies the selected current/archived object's verified bytes into
+a new immutable object and promotes a *new* revision through the same finalize
+checks. The original revision and audit trail remain intact. Missing, deleted
+or conflict revisions cannot be restored through this endpoint.
+
+Still pending: direct short-lived R2 transfer URLs, cleanup of abandoned uploads,
+production scheduling and automatic save detection/host workflow. The Windows
+client now supports a manual localhost-only test workflow with copies outside
+Factorio's real saves folder. Do not use this local relay transport as the
+production service.
 
 References: [R2 integrity/conditional writes](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/)
 and [PKWARE ZIP format](https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT).

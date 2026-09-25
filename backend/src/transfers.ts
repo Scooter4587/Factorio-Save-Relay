@@ -158,10 +158,91 @@ export async function finalizeUpload(request: Request, db: D1Database, bucket: R
     db.prepare(`UPDATE worlds SET current_revision = (SELECT revision_number FROM revisions WHERE id = ?), updated_at = CURRENT_TIMESTAMP
       WHERE id = ? AND EXISTS (SELECT 1 FROM revisions WHERE id = ? AND status = 'current')
     `).bind(uploadId, worldId, uploadId),
+    // Keep the current revision plus the four most recent archived revisions.
+    // Mark first; physical deletion is retried separately and never targets current.
+    db.prepare(`UPDATE revisions SET status = 'pending_delete'
+      WHERE world_id = ? AND status = 'archived'
+        AND revision_number NOT IN (
+          SELECT revision_number FROM revisions WHERE world_id = ? AND status IN ('current', 'archived')
+          ORDER BY revision_number DESC LIMIT 5
+        )
+        AND EXISTS (SELECT 1 FROM revisions WHERE id = ? AND status = 'current')
+    `).bind(worldId, worldId, uploadId),
   ]);
   const result = await ownedUpload(db, worldId, uploadId, identity);
   if (result.status === "conflict") throw new ApiError(409, "upload_conflict", "The host lease or base revision changed. Uploaded content has been preserved.");
+  // Metadata is already committed. A deletion failure leaves pending_delete
+  // for the next cleanup run rather than invalidating a successful upload.
+  await cleanupRetention(db, bucket, worldId);
   return json({ revision: publicRevision(result) });
+}
+
+export async function cleanupRetention(db: D1Database, bucket: R2Bucket, worldId?: string): Promise<number> {
+  const statement = worldId
+    ? db.prepare("SELECT id, object_key FROM revisions WHERE world_id = ? AND status = 'pending_delete' ORDER BY finalized_at LIMIT 100").bind(worldId)
+    : db.prepare("SELECT id, object_key FROM revisions WHERE status = 'pending_delete' ORDER BY finalized_at LIMIT 100");
+  const { results } = await statement.all<{ id: string; object_key: string }>();
+  let deleted = 0;
+  for (const row of results) {
+    try {
+      await bucket.delete(row.object_key);
+      const changed = await db.prepare("UPDATE revisions SET status = 'deleted' WHERE id = ? AND status = 'pending_delete'")
+        .bind(row.id).run();
+      deleted += changed.meta.changes;
+    } catch {
+      // No object key or database error details in logs. A later call retries.
+      console.error("Retention cleanup failed; pending deletion will be retried.");
+    }
+  }
+  return deleted;
+}
+
+export async function restoreRevision(request: Request, db: D1Database, bucket: R2Bucket, worldId: string, revision: number, identity: Identity): Promise<Response> {
+  const world = await getWorld(db, worldId, identity.userId);
+  if (world.role !== "owner") throw new ApiError(403, "owner_required", "Only the world owner may restore a revision.");
+  const body = await readBody(request);
+  const expectedRevision = revisionNumber(body.expectedRevision);
+  const hash = await leaseHash(body.lockToken);
+  const source = await db.prepare("SELECT * FROM revisions WHERE world_id = ? AND revision_number = ? AND status IN ('current', 'archived')")
+    .bind(worldId, revision).first<Revision>();
+  if (!source) throw new ApiError(404, "revision_not_found", "Revision is unavailable for restore.");
+  const original = await bucket.get(source.object_key);
+  if (!verifiedObject(original, source)) {
+    if (original) await original.body.cancel();
+    throw new ApiError(503, "storage_integrity_error", "The selected revision is unavailable or does not match its checksum.");
+  }
+  const id = crypto.randomUUID();
+  const key = `worlds/${worldId}/restores/${id}.zip`;
+  // Reserve a new number, retaining the original object and audit history.
+  const reserved = await db.prepare(`
+    INSERT INTO revisions (id, world_id, revision_number, base_revision_number,
+      object_key, sha256, file_size_bytes, uploaded_by_device_id, upload_lease_hash, upload_expires_at)
+    SELECT ?, w.id, (SELECT COALESCE(MAX(revision_number), 0) + 1 FROM revisions WHERE world_id = w.id),
+      ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+24 hours')
+    FROM worlds w WHERE w.id = ? AND w.current_revision = ?
+      AND w.locked_by_device_id = ? AND w.lock_token_hash = ? AND w.lock_expires_at > ${NOW}
+      AND EXISTS (SELECT 1 FROM world_members WHERE world_id = w.id AND user_id = ? AND role = 'owner')
+      AND EXISTS (SELECT 1 FROM revisions WHERE id = ? AND status IN ('current', 'archived'))
+    RETURNING id
+  `).bind(id, expectedRevision, key, source.sha256, source.file_size_bytes, identity.deviceId,
+    hash, worldId, expectedRevision, identity.deviceId, hash, identity.userId, source.id).first<{ id: string }>();
+  if (!reserved) {
+    await original!.body.cancel();
+    throw new ApiError(409, "restore_not_allowed", "An owner host lease at the current revision is required.");
+  }
+  try {
+    const copied = await bucket.put(key, original!.body, { sha256: source.sha256,
+      onlyIf: { etagDoesNotMatch: "*" }, httpMetadata: { contentType: "application/zip", cacheControl: "no-store" } });
+    if (!verifiedObject(copied, source)) throw new Error("Restore copy was not verified.");
+  } catch {
+    throw new ApiError(503, "restore_copy_failed", "Could not copy the selected revision. The current save is unchanged.");
+  }
+  const finalizeRequest = new Request(request.url, { method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ uploadId: id, lockToken: body.lockToken }) });
+  const response = await finalizeUpload(finalizeRequest, db, bucket, worldId, identity);
+  if (response.status !== 200) return response;
+  const result = await response.json() as { revision: ReturnType<typeof publicRevision> };
+  return json({ revision: result.revision, restoredFromRevision: revision }, 201);
 }
 
 export async function listRevisions(db: D1Database, worldId: string, identity: Identity): Promise<Response> {

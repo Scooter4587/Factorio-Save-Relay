@@ -1,0 +1,77 @@
+using System.IO;
+using System.Net.Http;
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
+using System.Text.Json;
+
+namespace FactorioSaveRelay.Client;
+
+internal sealed class RelayApi : IDisposable
+{
+    private readonly HttpClient _client;
+    private readonly string _token;
+
+    public RelayApi(string address, string token)
+    {
+        if (!Uri.TryCreate(address, UriKind.Absolute, out var uri) || !uri.IsLoopback
+            || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)
+            || !string.IsNullOrEmpty(uri.UserInfo) || uri.AbsolutePath != "/")
+            throw new InvalidOperationException("The local test client accepts only a localhost service address.");
+        _client = new HttpClient { BaseAddress = uri, Timeout = TimeSpan.FromMinutes(30) };
+        _token = token;
+    }
+
+    public async Task<JsonElement> JsonAsync(HttpMethod method, string path, object? body = null)
+    {
+        using var request = NewRequest(method, path);
+        if (body is not null) request.Content = JsonContent.Create(body);
+        using var response = await _client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+        await EnsureSuccess(response);
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStreamAsync());
+        return document.RootElement.Clone();
+    }
+
+    public async Task PutZipAsync(string path, string lockToken, string filePath)
+    {
+        using var request = NewRequest(HttpMethod.Put, path);
+        request.Headers.Add("X-Relay-Lock", lockToken);
+        var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+        request.Content = new StreamContent(stream);
+        request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/zip");
+        request.Content.Headers.ContentLength = stream.Length;
+        using var response = await _client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+        await EnsureSuccess(response);
+    }
+
+    public async Task<HttpResponseMessage> OpenDownloadAsync(string path)
+    {
+        using var request = NewRequest(HttpMethod.Get, path);
+        var response = await _client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+        try { await EnsureSuccess(response); return response; }
+        catch { response.Dispose(); throw; }
+    }
+
+    private HttpRequestMessage NewRequest(HttpMethod method, string path)
+    {
+        if (!path.StartsWith("/v1/", StringComparison.Ordinal) || path.Contains("..", StringComparison.Ordinal))
+            throw new InvalidOperationException("Invalid API path.");
+        var request = new HttpRequestMessage(method, path);
+        if (_token.Length > 0) request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _token);
+        return request;
+    }
+
+    private static async Task EnsureSuccess(HttpResponseMessage response)
+    {
+        if (response.IsSuccessStatusCode) return;
+        var detail = await response.Content.ReadAsStringAsync();
+        try
+        {
+            using var json = JsonDocument.Parse(detail);
+            detail = json.RootElement.GetProperty("error").GetProperty("message").GetString() ?? detail;
+        }
+        catch (JsonException) { }
+        throw new InvalidOperationException($"Service returned {(int)response.StatusCode}: {detail}");
+    }
+
+    public void Dispose() => _client.Dispose();
+}

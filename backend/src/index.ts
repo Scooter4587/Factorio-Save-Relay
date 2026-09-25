@@ -2,7 +2,7 @@ import { ApiError, json } from "./http";
 import { authenticate, register } from "./identity";
 import { createInvite, createWorld, getWorld, listWorlds, redeemInvite } from "./worlds";
 import { acquireLease, changeLease } from "./leases";
-import { beginUpload, putContent, finalizeUpload, listRevisions, download } from "./transfers";
+import { beginUpload, putContent, finalizeUpload, listRevisions, download, restoreRevision, cleanupRetention } from "./transfers";
 
 interface Env {
   DB?: D1Database;
@@ -29,8 +29,9 @@ export default {
       const contentMatch = /^\/v1\/worlds\/([0-9a-f-]{36})\/uploads\/([0-9a-f-]{36})\/content$/.exec(pathname);
       const downloadMatch = /^\/v1\/worlds\/([0-9a-f-]{36})\/(?:revisions\/([1-9][0-9]*)\/)?download$/.exec(pathname);
       const historyMatch = /^\/v1\/worlds\/([0-9a-f-]{36})\/revisions$/.exec(pathname);
+      const restoreMatch = /^\/v1\/worlds\/([0-9a-f-]{36})\/revisions\/([1-9][0-9]*)\/restore$/.exec(pathname);
       const transfer = (method === "POST" && uploadMatch) || (method === "PUT" && contentMatch)
-        || (method === "GET" && (downloadMatch || historyMatch));
+        || (method === "GET" && (downloadMatch || historyMatch)) || (method === "POST" && restoreMatch);
       const registration = method === "POST" && pathname === "/v1/devices/register";
       const recognized = registration
         || (method === "GET" && pathname === "/v1/me")
@@ -56,6 +57,11 @@ export default {
           : await finalizeUpload(request, env.DB, env.SAVES, uploadMatch[1]!, identity);
         if (contentMatch) return await putContent(request, env.DB, env.SAVES, contentMatch[1]!, contentMatch[2]!, identity);
         if (historyMatch) return await listRevisions(env.DB, historyMatch[1]!, identity);
+        if (restoreMatch) {
+          const revision = Number(restoreMatch[2]);
+          if (!Number.isSafeInteger(revision)) throw new ApiError(400, "invalid_revision", "Invalid revision number.");
+          return await restoreRevision(request, env.DB, env.SAVES, restoreMatch[1]!, revision, identity);
+        }
         const revision = downloadMatch![2] === undefined ? undefined : Number(downloadMatch![2]);
         if (revision !== undefined && !Number.isSafeInteger(revision)) throw new ApiError(400, "invalid_revision", "Invalid revision number.");
         return await download(env.DB, env.SAVES, downloadMatch![1]!, identity, revision);
@@ -81,6 +87,11 @@ export default {
       // Database errors can contain bound values. Do not log them or expose them.
       console.error("API request failed unexpectedly.");
       return json({ error: { code: "internal_error", message: "The request could not be completed." } }, 500);
+    }
+  },
+  async scheduled(_event, env): Promise<void> {
+    if (env.DB && env.SAVES && env.ALLOW_LOCAL_TRANSFERS === "true") {
+      await cleanupRetention(env.DB, env.SAVES);
     }
   },
 } satisfies ExportedHandler<Env>;

@@ -50,3 +50,6 @@ jobs:
 
       - name: Build Windows client
         run: dotnet build client/FactorioSaveRelay.Client/FactorioSaveRelay.Client.csproj --configuration Release
+
+      - name: Verify safe local file replacement and credentials
+        run: dotnet run --project client/FactorioSaveRelay.SafetyTests/FactorioSaveRelay.SafetyTests.csproj --configuration Release

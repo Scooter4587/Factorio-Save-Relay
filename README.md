@@ -58,11 +58,10 @@ npm run dev
 The local health endpoint is `GET /health`. Local development uses a separate
 configuration and local D1 database; no Cloudflare account or domain is needed.
 With the server running, `npm run demo:local` verifies that two users can share a
-world through a one-time invitation. See [backend/README.md](backend/README.md)
-for details. `npm run demo:transfer` additionally sends synthetic ZIP revisions
-in both directions using two fresh test directories. See the backend guide
-for the API contract and testing instructions. Remote D1 and R2 resources are
-not provisioned yet.
+world through a one-time invitation. `npm run demo:transfer` sends synthetic ZIP
+revisions in both directions using two fresh test directories. See
+[backend/README.md](backend/README.md) for the API contract. Remote D1 and R2
+resources are not provisioned yet.
 
 ## Windows client development
 
@@ -73,6 +72,10 @@ application. From a Windows machine with the .NET 10 SDK:
 dotnet build client/FactorioSaveRelay.Client/FactorioSaveRelay.Client.csproj
 ```
 
+The manual localhost client is now available for testing with copies outside
+the real Factorio saves folder. See [client/README.md](client/README.md) for
+startup steps and file-safety limits.
+
 ## Project status
 
 - [x] Repository bootstrap
@@ -81,11 +84,12 @@ dotnet build client/FactorioSaveRelay.Client/FactorioSaveRelay.Client.csproj
 - [x] Windows client shell
 - [x] Backend device registration and authentication (local)
 - [x] Backend world creation and invitation flow (local)
-- [ ] Windows client registration and secure credential storage
+- [x] Local Windows client registration and Windows Credential Manager storage
 - [x] Backend host lease acquisition, renewal and release (local)
 - [x] Local ZIP upload/finalize, revision history and verified transfer demo
+- [x] Manual local Windows client with verified download and local backup
 - [ ] Direct R2 upload and verified download
-- [ ] Five-revision retention and restore
+- [x] Backend five-revision retention and restore (local)
 - [ ] End-to-end two-device test
 
 ## Trademark notice

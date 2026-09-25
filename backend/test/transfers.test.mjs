@@ -300,3 +300,77 @@ test("independent .NET ZIP with a directory and multiple deflated entries valida
   assert.equal((await finish(ctx, upload)).status, 200);
   assert.deepEqual((await download(ctx)).bytes, bytes);
 });
+
+test("five finalized revisions are retained; old objects and metadata are safely retired", async () => {
+  const ctx = await setup();
+  const uploaded = [];
+  let baseRevision = 0;
+  for (let i = 1; i <= 7; i++) {
+    const bytes = testZip(`History ${i}`);
+    const candidate = await begin(ctx, bytes, baseRevision);
+    assert.equal((await put(ctx, candidate, bytes)).status, 200);
+    assert.equal((await finish(ctx, candidate)).status, 200);
+    uploaded.push(candidate);
+    baseRevision = candidate.revision;
+  }
+  const history = (await api(`${ctx.base}/revisions`, ctx.b)).body.revisions;
+  assert.deepEqual(history.map(r => r.revision), uploaded.slice(-5).reverse().map(r => r.revision));
+  assert.equal(history.filter(r => r.status === "current").length, 1);
+  assert.equal((await download(ctx, ctx.b, `/revisions/${uploaded[0].revision}/download`)).status, 404);
+  for (const candidate of uploaded.slice(0, 2)) {
+    const row = await db.prepare("SELECT status, object_key FROM revisions WHERE id = ?").bind(candidate.id).first();
+    assert.equal(row.status, "deleted");
+    assert.equal(await bucket.head(row.object_key), null);
+  }
+  assert.deepEqual((await download(ctx, ctx.b)).bytes, testZip("History 7"));
+});
+
+test("owner restore copies an archived ZIP into a new auditable revision", async () => {
+  const ctx = await setup();
+  let baseRevision = 0;
+  const candidates = [];
+  for (let i = 1; i <= 3; i++) {
+    const bytes = testZip(`Restore ${i}`);
+    const candidate = await begin(ctx, bytes, baseRevision);
+    await put(ctx, candidate, bytes); await finish(ctx, candidate);
+    baseRevision = candidate.revision;
+    candidates.push(candidate);
+  }
+  const path = `${ctx.base}/revisions/${candidates[0].revision}/restore`;
+  const restored = await api(path, ctx.a, { expectedRevision: baseRevision, lockToken: ctx.lease.token });
+  assert.equal(restored.status, 201);
+  assert.equal(restored.body.restoredFromRevision, candidates[0].revision);
+  assert.ok(restored.body.revision.revision > baseRevision);
+  assert.equal(await current(ctx), restored.body.revision.revision);
+  assert.deepEqual((await download(ctx, ctx.b)).bytes, testZip("Restore 1"));
+  assert.deepEqual((await download(ctx, ctx.a, `/revisions/${candidates[2].revision}/download`)).bytes, testZip("Restore 3"));
+  const statuses = (await api(`${ctx.base}/revisions`, ctx.a)).body.revisions.map(r => r.status);
+  assert.deepEqual(statuses, ["current", "archived", "archived", "archived"]);
+});
+
+test("members and stale hosts cannot restore or alter current revision", async () => {
+  const ctx = await setup();
+  const candidate = await begin(ctx); await put(ctx, candidate); await finish(ctx, candidate);
+  const path = `${ctx.base}/revisions/${candidate.revision}/restore`;
+  assert.equal((await api(path, ctx.b, { expectedRevision: candidate.revision, lockToken: ctx.lease.token })).status, 403);
+  assert.equal((await api(path, ctx.a, { expectedRevision: 0, lockToken: ctx.lease.token })).status, 409);
+  assert.equal((await api(`${ctx.base}/revisions/999/restore`, ctx.a, { expectedRevision: candidate.revision, lockToken: ctx.lease.token })).status, 404);
+  assert.equal(await current(ctx), candidate.revision);
+});
+
+test("a retained conflict is never pruned with normal history", async () => {
+  const ctx = await setup();
+  const conflict = await begin(ctx); await put(ctx, conflict);
+  const winner = await begin(ctx); await put(ctx, winner); await finish(ctx, winner);
+  assert.equal((await finish(ctx, conflict)).status, 409);
+  let baseRevision = winner.revision;
+  for (let i = 0; i < 5; i++) {
+    const candidate = await begin(ctx, testZip(), baseRevision);
+    await put(ctx, candidate); await finish(ctx, candidate);
+    baseRevision = candidate.revision;
+  }
+  const history = (await api(`${ctx.base}/revisions`, ctx.b)).body.revisions;
+  assert.equal(history.filter(r => ["current", "archived"].includes(r.status)).length, 5);
+  assert.equal(history.find(r => r.revision === conflict.revision)?.status, "conflict");
+  assert.deepEqual((await download(ctx, ctx.b, `/revisions/${conflict.revision}/download`)).bytes, testZip());
+});
