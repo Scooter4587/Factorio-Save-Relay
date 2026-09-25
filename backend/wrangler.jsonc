@@ -1,0 +1,12 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "factorio-save-relay-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-25",
+  "observability": {
+    "enabled": true
+  }
+
+  // D1 and R2 bindings will be added after the resources are created.
+  // Never store API tokens or R2 secret keys in this file.
+}

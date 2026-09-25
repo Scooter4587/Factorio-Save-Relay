@@ -1,0 +1,70 @@
+<Window x:Class="FactorioSaveRelay.Client.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Factorio Save Relay"
+        Width="760"
+        Height="470"
+        MinWidth="680"
+        MinHeight="420"
+        WindowStartupLocation="CenterScreen"
+        Background="#10151D">
+    <Grid Margin="32">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="24" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="24" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0">
+            <TextBlock Text="FACTORIO SAVE RELAY"
+                       Foreground="#F2B441"
+                       FontWeight="Bold"
+                       FontSize="14" />
+            <TextBlock Text="Alternate hosts without passing save files by hand."
+                       Margin="0,8,0,0"
+                       Foreground="#F4F7FA"
+                       FontSize="24"
+                       FontWeight="SemiBold" />
+        </StackPanel>
+
+        <Border Grid.Row="2"
+                Padding="24"
+                Background="#18212C"
+                BorderBrush="#2B3949"
+                BorderThickness="1"
+                CornerRadius="8">
+            <StackPanel>
+                <TextBlock Text="Local setup"
+                           Foreground="#F4F7FA"
+                           FontSize="18"
+                           FontWeight="SemiBold" />
+                <TextBlock Text="Detected Factorio save directory"
+                           Margin="0,20,0,6"
+                           Foreground="#99A8B8" />
+                <TextBox x:Name="FactorioSavePathText"
+                         IsReadOnly="True"
+                         Padding="10"
+                         Background="#0D1218"
+                         Foreground="#DDE5ED"
+                         BorderBrush="#334458" />
+                <Border Margin="0,22,0,0"
+                        Padding="14"
+                        Background="#111923"
+                        CornerRadius="6">
+                    <StackPanel Orientation="Horizontal">
+                        <Ellipse Width="10" Height="10" Fill="#F2B441" Margin="0,0,10,0" />
+                        <TextBlock Text="Backend is not configured yet. Repository bootstrap is ready."
+                                   Foreground="#DDE5ED" />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </Border>
+
+        <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button Content="Join world" Width="120" Height="38" IsEnabled="False" Margin="0,0,10,0" />
+            <Button Content="Create world" Width="120" Height="38" IsEnabled="False" />
+        </StackPanel>
+    </Grid>
+</Window>
