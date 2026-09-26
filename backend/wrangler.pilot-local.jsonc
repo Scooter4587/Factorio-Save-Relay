@@ -1,0 +1,22 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "factorio-save-relay-pilot-local",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-25",
+  "dev": { "ip": "127.0.0.1", "port": 8788 },
+  "vars": {
+    "ALLOW_REGISTRATION": "true",
+    "ALLOW_LOCAL_TRANSFERS": "true",
+    "PRIVATE_PILOT": "true",
+    "REGISTRATION_KEY": "local-pilot-registration-key-only",
+    "ACCOUNT_PEPPER": "local-pilot-password-pepper-never-for-remote"
+  },
+  "r2_buckets": [{ "binding": "SAVES", "bucket_name": "factorio-save-relay-pilot-local", "remote": false }],
+  "d1_databases": [{
+    "binding": "DB",
+    "database_name": "factorio-save-relay-pilot-local",
+    "database_id": "00000000-0000-0000-0000-000000000002",
+    "migrations_dir": "migrations",
+    "remote": false
+  }]
+}

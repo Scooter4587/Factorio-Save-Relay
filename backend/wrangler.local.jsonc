@@ -1,0 +1,19 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "factorio-save-relay-local",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-25",
+  "dev": { "ip": "127.0.0.1" },
+  "vars": { "ALLOW_REGISTRATION": "true", "ALLOW_INSECURE_LOCAL_REGISTRATION": "true", "ALLOW_LOCAL_TRANSFERS": "true",
+    "ACCOUNT_PEPPER": "local-development-only-pepper-not-for-remote-use" },
+  "r2_buckets": [{ "binding": "SAVES", "bucket_name": "factorio-save-relay-local", "remote": false }],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "factorio-save-relay-local",
+      "database_id": "00000000-0000-0000-0000-000000000001",
+      "migrations_dir": "migrations",
+      "remote": false
+    }
+  ]
+}

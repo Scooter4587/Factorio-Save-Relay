@@ -3,17 +3,23 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "engines": {
-    "node": ">=22"
-  },
+  "engines": { "node": ">=22" },
   "scripts": {
     "check": "tsc --noEmit",
-    "dev": "wrangler dev",
+    "test": "node --test test/*.test.mjs",
+    "dev": "wrangler dev --config wrangler.local.jsonc --local",
+    "dev:pilot": "wrangler dev --config wrangler.pilot-local.jsonc --local",
+    "db:migrate:local": "wrangler d1 migrations apply factorio-save-relay-local --config wrangler.local.jsonc --local",
+    "db:migrate:pilot": "wrangler d1 migrations apply factorio-save-relay-pilot-local --config wrangler.pilot-local.jsonc --local",
+    "demo:local": "node scripts/demo-local.mjs",
+    "demo:transfer": "node scripts/demo-transfer.mjs",
     "deploy": "wrangler deploy",
     "deploy:dry": "wrangler deploy --dry-run"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260925.1",
+    "esbuild": "0.28.1",
+    "miniflare": "5.20260923.0-alpha",
     "typescript": "7.0.2",
     "wrangler": "4.140.0"
   }
