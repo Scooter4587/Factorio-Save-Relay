@@ -5,6 +5,7 @@ export interface Identity {
   displayName: string;
   deviceId: string;
   deviceName: string;
+  accountConfigured: number;
 }
 
 const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
@@ -15,7 +16,7 @@ export async function tokenHash(token: string): Promise<string> {
   return Array.from(new Uint8Array(hash), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-export function newToken(kind: "device" | "invite" | "lease", id: string): string {
+export function newToken(kind: "device" | "invite" | "lease" | "recovery", id: string): string {
   const secret = Array.from(crypto.getRandomValues(new Uint8Array(32)), (byte) => byte.toString(16).padStart(2, "0")).join("");
   return `fsr_${kind}.${id}.${secret}`;
 }
@@ -53,7 +54,8 @@ export async function authenticate(request: Request, db: D1Database): Promise<Id
   }
   const identity = await db.prepare(`
     SELECT d.id AS deviceId, d.device_name AS deviceName,
-           u.id AS userId, u.display_name AS displayName
+           u.id AS userId, u.display_name AS displayName,
+           CASE WHEN u.login_name IS NULL THEN 0 ELSE 1 END AS accountConfigured
     FROM devices d JOIN users u ON u.id = d.user_id
     WHERE d.token_hash = ? AND d.revoked_at IS NULL
   `).bind(await tokenHash(token)).first<Identity>();

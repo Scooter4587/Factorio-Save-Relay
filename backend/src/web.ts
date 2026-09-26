@@ -1,5 +1,6 @@
 import { ApiError, json, readBody, textField } from "./http";
 import { authenticate, validToken } from "./identity";
+import { loginAccount } from "./accounts";
 import { PAGE, SCRIPT, STYLE } from "./web-assets";
 
 const PREFIX = "/factorio-relay";
@@ -41,7 +42,7 @@ export function browserAsset(kind: "page" | "script" | "style"): Response {
   return new Response(body, { headers });
 }
 
-export async function browserSession(request: Request, db: D1Database): Promise<Response> {
+export async function browserSession(request: Request, db: D1Database, pepper?: string): Promise<Response> {
   sameOrigin(request);
   if (request.method === "DELETE") {
     const response = json({ signedOut: true });
@@ -49,7 +50,15 @@ export async function browserSession(request: Request, db: D1Database): Promise<
     return response;
   }
   if (request.method !== "POST") throw new ApiError(404, "not_found", "The requested endpoint does not exist.");
-  const token = textField(await readBody(request), "token", 160);
+  const body = await readBody(request);
+  let token: string;
+  if (typeof body.token === "string") {
+    token = textField(body, "token", 160);
+  } else {
+    const login = await loginAccount(new Request(request.url, { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ...body, deviceName: "Browser" }) }), db, pepper);
+    token = (await login.json() as { token: string }).token;
+  }
   const authRequest = new Request(request.url, { headers: { authorization: `Bearer ${token}` } });
   const identity = await authenticate(authRequest, db);
   const response = json({ identity });
@@ -63,8 +72,9 @@ export async function browserRequest<T>(request: Request, env: T,
   const url = new URL(request.url);
   url.pathname = url.pathname.slice(PREFIX.length);
   const registration = request.method === "POST" && url.pathname === "/v1/devices/register";
+  const recovery = request.method === "POST" && url.pathname === "/v1/accounts/recover";
   const token = cookieToken(request);
-  if (!registration && !token) throw new ApiError(401, "unauthorized", "Sign in to continue.");
+  if (!registration && !recovery && !token) throw new ApiError(401, "unauthorized", "Sign in to continue.");
   const headers = new Headers(request.headers);
   headers.delete("authorization");
   headers.delete("cookie");

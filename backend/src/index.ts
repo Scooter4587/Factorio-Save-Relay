@@ -5,6 +5,7 @@ import { acquireLease, changeLease } from "./leases";
 import { beginUpload, putContent, finalizeUpload, listRevisions, download, restoreRevision, cleanupRetention } from "./transfers";
 import { meteredBucket } from "./cost-guard";
 import { browserAsset, browserRequest, browserSession } from "./web";
+import { createAccount, loginAccount, recoverAccount, upgradeAccount } from "./accounts";
 
 interface Env {
   DB?: D1Database;
@@ -14,6 +15,7 @@ interface Env {
   SAVES?: R2Bucket;
   ALLOW_LOCAL_TRANSFERS?: string;
   PRIVATE_PILOT?: string;
+  ACCOUNT_PEPPER?: string;
 }
 
 const SERVICE_VERSION = "0.1.0";
@@ -44,7 +46,7 @@ async function handle(request: Request, env: Env): Promise<Response> {
       if (pathname === "/factorio-relay/style.css" && method === "GET") return browserAsset("style");
       if (pathname === "/factorio-relay/v1/browser/session") {
         if (!env.DB) throw new ApiError(503, "database_unavailable", "Database binding is not configured.");
-        return await browserSession(request, env.DB);
+        return await browserSession(request, env.DB, env.ACCOUNT_PEPPER);
       }
       if (pathname.startsWith("/factorio-relay/v1/")) {
         return await browserRequest(request, env, handle);
@@ -64,7 +66,11 @@ async function handle(request: Request, env: Env): Promise<Response> {
       const transfer = (method === "POST" && uploadMatch) || (method === "PUT" && contentMatch)
         || (method === "GET" && (downloadMatch || historyMatch)) || (method === "POST" && restoreMatch);
       const registration = method === "POST" && pathname === "/v1/devices/register";
+      const accountLogin = method === "POST" && pathname === "/v1/accounts/login";
+      const accountRecovery = method === "POST" && pathname === "/v1/accounts/recover";
+      const accountUpgrade = method === "POST" && pathname === "/v1/accounts/upgrade";
       const recognized = registration
+        || accountLogin || accountRecovery || accountUpgrade
         || (method === "GET" && pathname === "/v1/me")
         || (["GET", "POST"].includes(method) && pathname === "/v1/worlds")
         || (method === "POST" && pathname === "/v1/invites/redeem")
@@ -80,9 +86,14 @@ async function handle(request: Request, env: Env): Promise<Response> {
         if (!await registrationAuthorized(request, env)) {
           throw new ApiError(403, "registration_denied", "A valid registration key is required.");
         }
-        return await register(request, env.DB, env.PRIVATE_PILOT === "true");
+        return env.PRIVATE_PILOT === "true"
+          ? await createAccount(request, env.DB, env.ACCOUNT_PEPPER)
+          : await register(request, env.DB);
       }
+      if (accountLogin) return await loginAccount(request, env.DB, env.ACCOUNT_PEPPER);
+      if (accountRecovery) return await recoverAccount(request, env.DB, env.ACCOUNT_PEPPER);
       const identity = await authenticate(request, env.DB);
+      if (accountUpgrade) return await upgradeAccount(request, env.DB, identity, env.ACCOUNT_PEPPER);
       if (transfer) {
         if (env.ALLOW_LOCAL_TRANSFERS !== "true") throw new ApiError(503, "transfers_disabled", "Local transfer transport is disabled.");
         if (!env.SAVES) throw new ApiError(503, "storage_unavailable", "Save storage is not configured.");

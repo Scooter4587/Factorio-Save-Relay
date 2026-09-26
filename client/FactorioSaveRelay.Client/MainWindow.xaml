@@ -20,16 +20,23 @@
                     <StackPanel>
                         <TextBlock Text="Service address (HTTPS, or localhost for development)" Foreground="#DDE5ED" />
                         <TextBox x:Name="ServiceUrlBox" Text="http://127.0.0.1:8787" Margin="0,4,0,10" Padding="6" />
-                        <TextBlock Text="Profile name — e.g. Adam or Friend" Foreground="#DDE5ED" />
+                        <TextBlock Text="Account name — create your account on the web first" Foreground="#DDE5ED" />
                         <TextBox x:Name="ProfileBox" Text="Adam" Margin="0,4,0,10" Padding="6" />
                         <TextBlock Text="Device name" Foreground="#DDE5ED" />
                         <TextBox x:Name="DeviceNameBox" Text="My PC" Margin="0,4,0,10" Padding="6" />
-                        <TextBlock Text="Registration key for hosted service (used only when registering)" Foreground="#DDE5ED" />
-                        <PasswordBox x:Name="RegistrationKeyBox" Margin="0,4,0,10" Padding="6" />
-                        <StackPanel Orientation="Horizontal">
-                            <Button Content="Register new profile" Click="RegisterClick" Padding="12,7" Margin="0,0,8,0" />
-                            <Button Content="Load saved profile" Click="LoadProfileClick" Padding="12,7" />
+                        <TextBlock Text="Account password (not stored on this PC)" Foreground="#DDE5ED" />
+                        <PasswordBox x:Name="AccountPasswordBox" Margin="0,4,0,10" Padding="6" />
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                            <Button Content="Sign in on this PC" Click="AccountLoginClick" Padding="12,7" Margin="0,0,8,0" />
+                            <Button Content="Load saved sign-in" Click="LoadProfileClick" Padding="12,7" />
                         </StackPanel>
+                        <Expander Header="Local development: create a disposable test profile" Foreground="#DDE5ED">
+                            <StackPanel Margin="0,8,0,0">
+                                <TextBlock Text="Registration key (only if your local service requires one)" Foreground="#DDE5ED" />
+                                <PasswordBox x:Name="RegistrationKeyBox" Margin="0,4,0,10" Padding="6" />
+                                <Button Content="Create local test profile" Click="RegisterClick" Padding="12,7" />
+                            </StackPanel>
+                        </Expander>
                     </StackPanel>
                 </GroupBox>
                 <GroupBox Header="2. Shared world" Foreground="#F2B441" Padding="12" Margin="0,0,0,12">

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { before, after, test } from "node:test";
 import { readFile, readdir } from "node:fs/promises";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID, randomBytes } from "node:crypto";
 import { build } from "esbuild";
 import { Miniflare, convertV4MiniflareOptions } from "miniflare";
 import { testZip } from "./zip-fixture.mjs";
@@ -16,7 +16,8 @@ before(async () => {
   mf = new Miniflare(convertV4MiniflareOptions({ modules: true, script: built.outputFiles[0].text,
     compatibilityDate: "2026-09-25", d1Databases: ["DB"], r2Buckets: ["SAVES"],
     bindings: { ALLOW_REGISTRATION: "true", ALLOW_LOCAL_TRANSFERS: "true",
-      PRIVATE_PILOT: "true", REGISTRATION_KEY: "private-test-registration-key" } }));
+      PRIVATE_PILOT: "true", REGISTRATION_KEY: "private-test-registration-key",
+      ACCOUNT_PEPPER: "test-account-pepper-for-local-worker-only" } }));
   const db = await mf.getD1Database("DB");
   for (const file of (await readdir(new URL("../migrations/", import.meta.url))).filter(f => f.endsWith(".sql")).sort()) {
     const sql = await readFile(new URL(`../migrations/${file}`, import.meta.url), "utf8");
@@ -37,7 +38,7 @@ test("private page is served with CSP and the browser API requires a session", a
   const page = await send("/factorio-relay");
   assert.equal(page.status, 200);
   assert.match(page.headers.get("content-security-policy"), /frame-ancestors 'none'/);
-  assert.match(await page.text(), /Odovzdať save/);
+  assert.match(await page.text(), /Som tu prvýkrát/);
   const script = await send("/factorio-relay/app.js");
   assert.equal(script.status, 200);
   assert.match(script.headers.get("content-type"), /javascript/);
@@ -52,7 +53,7 @@ test("private page is served with CSP and the browser API requires a session", a
 test("registration, cookie sign-in, origin check and logout", async () => {
   const registration = await send(prefix + "/devices/register", { method: "POST",
     headers: { "x-relay-registration-key": "private-test-registration-key" },
-    body: { displayName: "Web owner", deviceName: "Browser" } });
+    body: { username: "web-owner", password: "correct horse battery staple", displayName: "Web owner", deviceName: "Browser" } });
   assert.equal(registration.status, 201);
   const owner = await payload(registration);
   const cookie = registration.headers.get("set-cookie").split(";")[0];
@@ -68,9 +69,9 @@ test("registration, cookie sign-in, origin check and logout", async () => {
   assert.equal(world.currentRevision, 0);
   const signedOut = await send(prefix + "/browser/session", { method: "DELETE", cookie });
   assert.match(signedOut.headers.get("set-cookie"), /Max-Age=0/);
-  const badLogin = await send(prefix + "/browser/session", { method: "POST", body: { token: "wrong" } });
+  const badLogin = await send(prefix + "/browser/session", { method: "POST", body: { username: "web-owner", password: "wrong-password-value" } });
   assert.equal(badLogin.status, 401);
-  const login = await send(prefix + "/browser/session", { method: "POST", body: { token: owner.token } });
+  const login = await send(prefix + "/browser/session", { method: "POST", body: { username: "web-owner", password: "correct horse battery staple" } });
   assert.equal(login.status, 200);
   assert.match(login.headers.get("set-cookie"), /HttpOnly/);
 
@@ -94,4 +95,46 @@ test("registration, cookie sign-in, origin check and logout", async () => {
   assert.equal(download.status, 200);
   assert.equal(sha(Buffer.from(await download.arrayBuffer())), sha(bytes));
   assert.equal((await payload(await send(base, { cookie }))).world.currentRevision, 1);
+  const invalidRecovery = await send(prefix + "/accounts/recover", { method: "POST",
+    body: { username: "web-owner", recoveryCode: "wrong", newPassword: "another long password" } });
+  assert.equal(invalidRecovery.status, 401);
+  const recovered = await send(prefix + "/accounts/recover", { method: "POST",
+    body: { username: "web-owner", recoveryCode: owner.recoveryCode, newPassword: "another long password" } });
+  assert.equal(recovered.status, 200);
+  const nextCode = (await payload(recovered)).recoveryCode;
+  assert.ok(nextCode && nextCode !== owner.recoveryCode);
+  assert.equal((await send(prefix + "/me", { cookie })).status, 401);
+  assert.equal((await send(prefix + "/browser/session", { method: "POST",
+    body: { username: "web-owner", password: "correct horse battery staple" } })).status, 401);
+  const restoredLogin = await send(prefix + "/browser/session", { method: "POST",
+    body: { username: "web-owner", password: "another long password" } });
+  assert.equal(restoredLogin.status, 200);
+  const restoredCookie = restoredLogin.headers.get("set-cookie").split(";")[0];
+  assert.equal((await payload(await send(prefix + "/worlds", { cookie: restoredCookie }))).worlds[0].id, world.id);
+  assert.equal((await send(prefix + "/accounts/recover", { method: "POST",
+    body: { username: "web-owner", recoveryCode: owner.recoveryCode, newPassword: "third long password" } })).status, 401);
+  assert.equal((await payload(await send(prefix + "/worlds", { cookie: login.headers.get("set-cookie").split(";")[0] }))).error.code, "unauthorized");
+});
+
+test("an existing token-only account can add a login without losing its identity", async () => {
+  const db = await mf.getD1Database("DB");
+  const userId = randomUUID();
+  const deviceId = randomUUID();
+  const token = `fsr_device.${deviceId}.${randomBytes(32).toString("hex")}`;
+  await db.prepare("INSERT INTO users (id, display_name) VALUES (?, ?)").bind(userId, "Existing player").run();
+  await db.prepare("INSERT INTO devices (id, user_id, device_name, token_hash) VALUES (?, ?, ?, ?)")
+    .bind(deviceId, userId, "Old browser", sha(token)).run();
+  const oldLogin = await send(prefix + "/browser/session", { method: "POST", body: { token } });
+  assert.equal(oldLogin.status, 200);
+  const cookie = oldLogin.headers.get("set-cookie").split(";")[0];
+  assert.equal((await payload(await send(prefix + "/me", { cookie }))).identity.accountConfigured, 0);
+  const upgrade = await send(prefix + "/accounts/upgrade", { method: "POST", cookie,
+    body: { username: "existing-player", password: "new account password" } });
+  assert.equal(upgrade.status, 200);
+  assert.match((await payload(upgrade)).recoveryCode, /^fsr_recovery\./);
+  assert.equal((await payload(await send(prefix + "/me", { cookie }))).identity.accountConfigured, 1);
+  const login = await send(prefix + "/browser/session", { method: "POST",
+    body: { username: "existing-player", password: "new account password" } });
+  assert.equal(login.status, 200);
+  assert.equal((await payload(login)).identity.userId, userId);
 });

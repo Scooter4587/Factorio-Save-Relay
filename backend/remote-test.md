@@ -1,5 +1,12 @@
 # Manually connect a private Cloudflare test service
 
+The account flow documented below is implemented and verified locally on the
+current development branch. It is not yet live at `scooteruniverse.eu`.
+Before updating the existing service, apply migration `0004_account_login.sql`
+to its existing D1 database and set `ACCOUNT_PEPPER` on the Worker; deploying
+the new code without both would leave account login unavailable. Existing
+token-only accounts can add a username and password with their original token.
+
 This prepares a two-PC test with **copies** of a Factorio save. The service
 also has a `workers.dev` HTTPS fallback. The browser panel is routed to
 `https://scooteruniverse.eu/factorio-relay`. Do not
@@ -42,17 +49,17 @@ registration in the config and redeploy to close enrollment completely.
 1. Install Node.js 22+, open PowerShell in `backend/`, run `npm ci` and
    `npx wrangler login` with your Cloudflare account. Do this yourself; do
    not share Cloudflare credentials or API tokens.
-2. Run `npx wrangler d1 create factorio-save-relay-test` and
-   `npx wrangler r2 bucket create factorio-save-relay-test`. Keep the R2 bucket
-   private and Standard; leave public `r2.dev` access disabled.
-3. Copy `wrangler.remote.example.jsonc` to `wrangler.remote.jsonc` and replace
-   `REPLACE_WITH_YOUR_D1_DATABASE_ID` with the ID from step 2. The real config
-   file is ignored by Git. If you chose another bucket/database name, update
-   the names in the copied config.
+2. On a new installation, create `factorio-save-relay-test` D1 and R2 resources
+   with Wrangler. Keep the R2 bucket private and Standard; leave public `r2.dev`
+   access disabled. On the existing pilot, reuse its D1 database and R2 bucket.
+3. On a new installation, copy `wrangler.remote.example.jsonc` to
+   `wrangler.remote.jsonc` and fill in the D1 database ID. The real config is
+   ignored by Git. On the existing pilot, keep its current ignored config.
 4. Run `npx wrangler d1 migrations apply factorio-save-relay-test --remote
    --config wrangler.remote.jsonc`. This creates tables in the **new remote**
-   test database; local data and Factorio saves are unaffected.
-5. Generate a random registration key in PowerShell:
+   database migrations. It preserves existing users, worlds and save metadata;
+   local Factorio saves are unaffected.
+5. Generate a random account password pepper in PowerShell:
 
    ```powershell
    $bytes = [byte[]]::new(32)
@@ -61,17 +68,17 @@ registration in the config and redeploy to close enrollment completely.
    ```
 
    Save it privately, then run
-   `npx wrangler secret put REGISTRATION_KEY --config wrangler.remote.jsonc`
-   and enter the key at the prompt. Never put it in a repository file. Anyone
-   with this key can register another test user, so share it only with the
-   second player through a private channel.
+   `npx wrangler secret put ACCOUNT_PEPPER --config wrangler.remote.jsonc`.
+   Never put it in a repository file. On a new installation, separately
+   generate and set `REGISTRATION_KEY` the same way. On the existing pilot,
+   keep its current registration key; it is only needed when creating an account.
 6. Run `npx wrangler deploy --config wrangler.remote.jsonc`. Wrangler connects
    only the `/factorio-relay` paths to this Worker; the existing Pages site
    continues to handle other paths. Open `<workers.dev URL>/health` and
    `https://scooteruniverse.eu/factorio-relay` to verify both. The browser
-   panel lets each player register, create/join the world and manually exchange
-   ZIP copies. Save each displayed device token privately. The Windows app
-   remains available at the `workers.dev` base URL for its separate test flow.
+   panel lets each player create an account, create/join the world and manually
+   exchange ZIP copies. Save each displayed emergency recovery code privately.
+   The Windows app signs in to the same account using the `workers.dev` base URL.
 
 The template schedules daily retention cleanup. A failed cleanup stays pending
 for a later run. Existing device tokens continue to work after registration is

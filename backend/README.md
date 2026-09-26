@@ -12,15 +12,19 @@ The Worker serves a Slovak manual test panel at `/factorio-relay` (locally:
 all other paths. The same panel is also available on the Worker's `workers.dev`
 hostname as a fallback. The route is configured in `wrangler.remote.example.jsonc`.
 
-Each of the two players registers once with the private registration key. The
-panel shows the new device token once: store it in a password manager. Later
-sign-in uses that token, not a display name or password. The browser keeps it
-in a seven-day `HttpOnly`, `Secure` (HTTPS), `SameSite=Strict` cookie scoped to
-`/factorio-relay`; the JavaScript does not save it in local/session storage.
-Sign-out clears the browser cookie, but does not revoke the device token. A
-lost token cannot currently be recovered without administrative work; the pilot
-cannot register more than two users. The same token could be used by a future
-Windows client sign-in flow, which is not yet implemented.
+Each of the two players creates an account with a name, password and the private
+registration key. Later browser sign-in uses the name and password; the device
+token stays in a seven-day `HttpOnly`, `Secure` (HTTPS), `SameSite=Strict` cookie
+scoped to `/factorio-relay`. The JavaScript does not save it in local/session
+storage or show it during normal registration. A one-time emergency recovery
+code is displayed at registration. Using it changes the password, rotates the
+recovery code and revokes all existing device tokens. The Windows test client
+can sign in to the same account and stores only its device token in Windows
+Credential Manager, not the password. Older token-only accounts can still sign
+in with their existing key and add a password without losing their world.
+Account password hashes use PBKDF2-SHA256 with a per-user salt and a separate
+`ACCOUNT_PEPPER` Worker secret. The private pilot shares one bounded login
+attempt counter; excessive attempts pause account login for 15 minutes.
 Because the panel shares the `scooteruniverse.eu` origin with the existing
 site, any future script on that site could make same-origin requests to this
 panel. Keep the site free of untrusted scripts; a separate subdomain would be
@@ -56,6 +60,12 @@ The API listens on `http://127.0.0.1:8787`. Both commands explicitly use
 `wrangler.local.jsonc` and local storage. The D1 ID in that file is a placeholder,
 not a Cloudflare resource. No account, domain, R2 bucket or deployment is needed.
 Local database files live in ignored `.wrangler/` storage.
+
+To preview the private two-player account flow against a separate local database,
+run `npm run db:migrate:pilot` and `npm run dev:pilot`. Open
+`http://127.0.0.1:8788/factorio-relay`. The registration key and pepper in
+`wrangler.pilot-local.jsonc` are disposable localhost-only test values; never
+reuse them for the hosted service. The ordinary local demo above remains separate.
 
 With the server running, open a second terminal in `backend/`:
 
@@ -104,7 +114,10 @@ by the server, never trusted from request fields.
 | --- | --- | --- | --- |
 | GET | `/health` | none | Public service health |
 | GET | `/v1/version` | none | Public version |
-| POST | `/v1/devices/register` | `{ "displayName": "Adam", "deviceName": "Adam PC" }` | 201: `{ user, device, token }` |
+| POST | `/v1/devices/register` | Local demo: `{ "displayName": "Adam", "deviceName": "Adam PC" }`; private pilot also requires `username` and `password` | 201: `{ user, device, token }` and one-time `recoveryCode` in the pilot |
+| POST | `/v1/accounts/login` | `{ "username": "adam", "password": "…", "deviceName": "Adam PC" }` | `{ user, device, token }` for the same account |
+| POST | `/v1/accounts/recover` | `{ "username": "adam", "recoveryCode": "…", "newPassword": "…" }` | Rotates the recovery code and revokes all devices |
+| POST | `/v1/accounts/upgrade` | Authenticated old account: `{ "username": "adam", "password": "…" }` | Adds name/password without replacing user or world |
 | GET | `/v1/me` | none | `{ identity: { userId, displayName, deviceId, deviceName } }` |
 | POST | `/v1/worlds` | `{ "name": "Pyanodon" }` | 201: `{ world }`, caller is owner |
 | GET | `/v1/worlds` | none | `{ worlds: [...] }`, only caller's memberships |
@@ -120,12 +133,13 @@ and `createdAt`, plus `hostDeviceId` and `hostLeaseExpiresAt`. The host fields
 are null when no active lease exists; no lease secret is exposed. Revision is
 zero before the first finalized upload.
 
-Registration currently creates one new user and one device every time. A display
-name is a label, not a login or proof of identity. Linking another device to an
-existing user and credential rotation/recovery are future work. The raw device
-token is returned only at creation and the Windows app stores it in Credential
-Manager. A hosted service requires a separate `REGISTRATION_KEY` Worker secret;
-the app sends it only on registration and never persists it.
+In the private pilot, registration creates one account and its first browser
+device. Account login creates another device credential for the signed-in PC or
+browser. Local legacy development registration still creates disposable users
+without a password, so the existing two-client demos continue to work. A hosted
+service needs separate `REGISTRATION_KEY` and `ACCOUNT_PEPPER` Worker secrets.
+The registration key is only used for creating a new account; the Windows app
+does not persist a password or registration key.
 
 Device tokens and invitation codes contain a UUID salt plus 256 random bits.
 D1 stores only SHA-256 hashes of the complete tokens. Invitation codes are opaque

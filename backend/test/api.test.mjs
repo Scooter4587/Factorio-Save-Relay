@@ -66,13 +66,14 @@ test("health/version remain public; unknown routes return JSON 404", async () =>
 });
 
 test("registration is local-only without a secret and gated by a secret remotely", async () => {
-  const body = JSON.stringify({ displayName: "Remote", deviceName: "PC" });
+  const body = JSON.stringify({ username: "remote", password: "strong remote password", displayName: "Remote", deviceName: "PC" });
   const localOnly = await mf.dispatchFetch("https://relay.example.com/v1/devices/register", {
     method: "POST", headers: { "content-type": "application/json" }, body,
   });
   assert.equal(localOnly.status, 403);
   const remote = runtime({ modules: true, script, compatibilityDate: "2026-09-25", d1Databases: ["DB"],
-    bindings: { ALLOW_REGISTRATION: "true", REGISTRATION_KEY: "long-disposable-test-secret", PRIVATE_PILOT: "true" } });
+    bindings: { ALLOW_REGISTRATION: "true", REGISTRATION_KEY: "long-disposable-test-secret", PRIVATE_PILOT: "true",
+      ACCOUNT_PEPPER: "test-only-account-pepper-never-deploy" } });
   try {
     const remoteDb = await remote.getD1Database("DB");
     for (const file of (await readdir(new URL("../migrations/", import.meta.url))).filter(f => f.endsWith(".sql")).sort()) {
@@ -91,15 +92,20 @@ test("registration is local-only without a secret and gated by a secret remotely
     assert.equal(response.status, 201);
     const owner = await response.json();
     assert.ok(owner.token);
-    const registerPilot = () => api("/v1/devices/register", { method: "POST",
+    const registerPilot = (name) => api("/v1/devices/register", { method: "POST",
       headers: { "x-relay-registration-key": "long-disposable-test-secret" },
-      body: { displayName: "Friend", deviceName: "Friend-PC" } }, remote);
-    const competingRegistrations = await Promise.all([registerPilot(), registerPilot()]);
+      body: { username: name, password: "strong friend password", displayName: name, deviceName: "Friend-PC" } }, remote);
+    const competingRegistrations = await Promise.all([registerPilot("friend-a"), registerPilot("friend-b")]);
     assert.deepEqual(competingRegistrations.map((r) => r.status).sort(), [201, 403]);
     assert.equal(competingRegistrations.find((r) => r.status === 403).body.error.code, "pilot_full");
     const friend = competingRegistrations.find((r) => r.status === 201).body;
     assert.equal((await remoteDb.prepare("SELECT COUNT(*) AS count FROM users").first()).count, 2);
     assert.equal((await remoteDb.prepare("SELECT COUNT(*) AS count FROM devices").first()).count, 2);
+    const desktopLogin = await api("/v1/accounts/login", { method: "POST",
+      body: { username: "remote", password: "strong remote password", deviceName: "Remote desktop" } }, remote);
+    assert.equal(desktopLogin.status, 200);
+    assert.equal(desktopLogin.body.user.id, owner.user.id);
+    assert.notEqual(desktopLogin.body.token, owner.token);
 
     const createPilotWorld = (player) => api("/v1/worlds", { method: "POST", token: player.token,
       body: { name: "Shared save" } }, remote);

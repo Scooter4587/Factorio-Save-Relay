@@ -1,14 +1,18 @@
 # Windows client — manual test
 
-This .NET 10 WPF client connects to localhost or an HTTPS test service. It can register
-separate test profiles, create/join a shared world, acquire and renew the host
+This .NET 10 WPF client connects to localhost or an HTTPS test service. For the
+hosted private pilot, create and pair accounts on the web first, then use
+**Sign in on this PC** with the same account name and password. The app stores
+its device credential in Windows Credential Manager, not the password.
+The legacy local test registration remains for the two-window development demo.
+The client can create/join a shared world, acquire and renew the host
 lease, upload a stable selected ZIP automatically while hosting, download the
 current revision and restore a
 retained revision. Credentials are stored in Windows Credential Manager under
 the current Windows user, keyed by service URL and profile name. A registration
 token is not written to the repository or displayed in the interface. A hosted
-service requires a separate registration key only when creating a profile; the
-key is not saved by the app. See [the remote service guide](../backend/remote-test.md)
+service requires a separate registration key only when creating an account on
+the web; the key is not saved by the app. See [the remote service guide](../backend/remote-test.md)
 when ready for a two-PC test.
 
 ## Start the local service
@@ -75,7 +79,7 @@ the transfer. An active lease renews every minute; losing it blocks publishing.
 watch the real game's save folder. It intentionally blocks that folder, and
 remote testing needs your own private Cloudflare service. The current remote
 Worker relay accepts only ZIPs up to 90,000,000 bytes. Automatic download,
-real-game integration, direct R2 uploads, recovery of lost credentials and a production installer are
+real-game integration, direct R2 uploads and a production installer are
 still pending. A ZIP can pass archive checks yet be incompatible with your
 installed Factorio version or mods. Do not treat this stage as a production
 save synchronizer.

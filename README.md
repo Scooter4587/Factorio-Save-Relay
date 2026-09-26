@@ -29,7 +29,7 @@ conflicting histories.
 | API | Cloudflare Workers / TypeScript | Authentication, membership, leases and revision coordination |
 | Metadata | Cloudflare D1 | Users, devices, worlds, invites and revision history |
 | Save storage | Cloudflare R2 | Private immutable Factorio save archives |
-| Browser panel | Worker-hosted Web UI | Manual private registration, world, history and ZIP handoff |
+| Browser panel | Worker-hosted Web UI | Private account sign-in, pairing, world history and manual ZIP handoff |
 
 See [docs/architecture.md](docs/architecture.md) for the initial technical design.
 
@@ -80,6 +80,9 @@ The [remote service guide](backend/remote-test.md) covers the private Worker
 and browser panel at `scooteruniverse.eu/factorio-relay`. It is limited to
 small ZIPs until direct R2 upload is implemented.
 
+Account registration and sign-in are implemented and tested locally on this
+branch, but are not yet deployed to the public URL.
+
 ## Project status
 
 - [x] Repository bootstrap
@@ -95,6 +98,10 @@ small ZIPs until direct R2 upload is implemented.
 - [x] Portable Windows test build and HTTPS service connection
 - [x] Automatic upload of stable changes to a selected test ZIP while hosting
 - [x] Private manual browser panel for two players, with verified ZIP handoff
+- [x] Local private-pilot account registration, password sign-in and recovery
+- [x] Local web onboarding for creating or joining the shared world
+- [ ] Deploy account onboarding to the private test service
+- [ ] Publish a tested Windows app download behind account sign-in
 - [ ] Automatic download and safe integration with the selected real Factorio save
 - [ ] Direct R2 upload and verified download
 - [x] Backend five-revision retention and restore (local)

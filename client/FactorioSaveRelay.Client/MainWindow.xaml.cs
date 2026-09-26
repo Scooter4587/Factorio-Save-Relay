@@ -79,6 +79,28 @@ public partial class MainWindow : Window
         StatusText.Text = $"Profile {profile} registered. Its credential is in Windows Credential Manager.";
     });
 
+    private async void AccountLoginClick(object sender, RoutedEventArgs e) => await Run(async () =>
+    {
+        if (_leaseToken is not null) throw new InvalidOperationException("Release the current host lease before switching accounts.");
+        var address = ServiceUrlBox.Text.Trim();
+        var username = ProfileBox.Text.Trim();
+        var password = AccountPasswordBox.Password;
+        AccountPasswordBox.Clear();
+        if (password.Length == 0) throw new InvalidOperationException("Enter your account password.");
+        if (CredentialStore.Load(address, username) is not null)
+            throw new InvalidOperationException("This account is already saved on this PC. Load the saved sign-in instead.");
+        using var login = new RelayApi(address, "");
+        var result = await login.JsonAsync(HttpMethod.Post, "/v1/accounts/login",
+            new { username, password, deviceName = DeviceNameBox.Text.Trim() });
+        var token = result.GetProperty("token").GetString()!;
+        CredentialStore.Save(address, username, token);
+        _api?.Dispose();
+        _api = new RelayApi(address, token);
+        WorldCombo.Items.Clear(); HistoryCombo.Items.Clear(); _pending = null;
+        await RefreshWorldsAsync();
+        StatusText.Text = $"Signed in as {username}. This PC's credential is stored in Windows Credential Manager.";
+    });
+
     private async void LoadProfileClick(object sender, RoutedEventArgs e) => await Run(async () =>
     {
         if (_leaseToken is not null) throw new InvalidOperationException("Release the current host lease before switching profiles.");
