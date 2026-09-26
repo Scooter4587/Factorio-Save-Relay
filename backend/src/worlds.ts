@@ -12,6 +12,12 @@ interface World {
   hostLeaseExpiresAt: string | null;
 }
 
+interface WorldMember {
+  userId: string;
+  displayName: string;
+  role: "owner" | "member";
+}
+
 const WORLD_SELECT = `SELECT w.id, w.name, w.owner_user_id AS ownerUserId,
   w.current_revision AS currentRevision, m.role, w.created_at AS createdAt,
   CASE WHEN w.lock_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
@@ -26,6 +32,19 @@ export async function getWorld(db: D1Database, worldId: string, userId: string):
   // Do not reveal whether another user's world exists.
   if (!world) throw new ApiError(404, "world_not_found", "World not found.");
   return world;
+}
+
+export async function getWorldDetails(db: D1Database, worldId: string, userId: string): Promise<World & { members: WorldMember[] }> {
+  const world = await getWorld(db, worldId, userId);
+  const { results } = await db.prepare(`
+    SELECT u.id AS userId, u.display_name AS displayName, m.role
+    FROM world_members m JOIN users u ON u.id = m.user_id
+    WHERE m.world_id = ? AND EXISTS (
+      SELECT 1 FROM world_members viewer WHERE viewer.world_id = m.world_id AND viewer.user_id = ?
+    )
+    ORDER BY CASE m.role WHEN 'owner' THEN 0 ELSE 1 END, u.display_name, u.id
+  `).bind(worldId, userId).all<WorldMember>();
+  return { ...world, members: results };
 }
 
 export async function listWorlds(db: D1Database, identity: Identity): Promise<Response> {

@@ -1,6 +1,6 @@
 import { ApiError, json } from "./http";
 import { authenticate, register, tokenHash } from "./identity";
-import { createInvite, createWorld, getWorld, listWorlds, redeemInvite } from "./worlds";
+import { createInvite, createWorld, getWorldDetails, listWorlds, redeemInvite } from "./worlds";
 import { acquireLease, changeLease } from "./leases";
 import { beginUpload, putContent, finalizeUpload, listRevisions, download, restoreRevision, cleanupRetention } from "./transfers";
 import { meteredBucket } from "./cost-guard";
@@ -126,7 +126,7 @@ async function handle(request: Request, env: Env): Promise<Response> {
       }
       const worldId = worldMatch![1]!;
       return method === "GET"
-        ? json({ world: await getWorld(env.DB, worldId, identity.userId) })
+        ? json({ world: await getWorldDetails(env.DB, worldId, identity.userId) })
         : await createInvite(env.DB, worldId, identity);
     } catch (error) {
       if (error instanceof ApiError) return json({ error: { code: error.code, message: error.message } }, error.status);

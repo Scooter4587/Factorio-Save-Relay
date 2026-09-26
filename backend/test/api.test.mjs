@@ -169,7 +169,13 @@ test("two users share a world through a single-use invite, but not other worlds"
   assert.equal(joined.body.world.ownerUserId, adam.user.id);
   const worlds = (await api("/v1/worlds", { token: friend.token })).body.worlds;
   assert.deepEqual(worlds.map((item) => item.id), [shared.id]);
-  assert.equal((await api(`/v1/worlds/${shared.id}`, { token: friend.token })).status, 200);
+  const expectedMembers = [
+    { userId: adam.user.id, displayName: "Adam", role: "owner" },
+    { userId: friend.user.id, displayName: "Friend", role: "member" },
+  ];
+  assert.deepEqual((await api(`/v1/worlds/${shared.id}`, { token: adam.token })).body.world.members, expectedMembers);
+  assert.deepEqual((await api(`/v1/worlds/${shared.id}`, { token: friend.token })).body.world.members, expectedMembers);
+  assert.deepEqual((await api(`/v1/worlds/${privateWorld.id}`, { token: adam.token })).body.world.members, expectedMembers.slice(0, 1));
   assert.equal((await api(`/v1/worlds/${privateWorld.id}`, { token: friend.token })).status, 404);
   assert.equal((await redeem(friend, invitation.code)).status, 409);
 });

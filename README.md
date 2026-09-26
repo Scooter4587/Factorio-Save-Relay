@@ -80,8 +80,9 @@ The [remote service guide](backend/remote-test.md) covers the private Worker
 and browser panel at `scooteruniverse.eu/factorio-relay`. It is limited to
 small ZIPs until direct R2 upload is implemented.
 
-Account registration and sign-in are implemented and tested locally on this
-branch, but are not yet deployed to the public URL.
+Account registration and sign-in are deployed on the private pilot URL. The
+browser panel shows both world members after pairing; it does not indicate
+whether they are currently online.
 
 ## Project status
 
@@ -100,7 +101,7 @@ branch, but are not yet deployed to the public URL.
 - [x] Private manual browser panel for two players, with verified ZIP handoff
 - [x] Local private-pilot account registration, password sign-in and recovery
 - [x] Local web onboarding for creating or joining the shared world
-- [ ] Deploy account onboarding to the private test service
+- [x] Deploy account onboarding to the private test service
 - [ ] Publish a tested Windows app download behind account sign-in
 - [ ] Automatic download and safe integration with the selected real Factorio save
 - [ ] Direct R2 upload and verified download
