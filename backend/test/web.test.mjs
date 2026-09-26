@@ -38,7 +38,9 @@ test("private page is served with CSP and the browser API requires a session", a
   const page = await send("/factorio-relay");
   assert.equal(page.status, 200);
   assert.match(page.headers.get("content-security-policy"), /frame-ancestors 'none'/);
-  assert.match(await page.text(), /Som tu prvýkrát/);
+  const html = await page.text();
+  assert.match(html, /Som tu prvýkrát/);
+  assert.match(html, /Hráči sveta/);
   const script = await send("/factorio-relay/app.js");
   assert.equal(script.status, 200);
   assert.match(script.headers.get("content-type"), /javascript/);

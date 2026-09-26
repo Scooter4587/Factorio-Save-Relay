@@ -1,11 +1,9 @@
 # Manually connect a private Cloudflare test service
 
-The account flow documented below is implemented and verified locally on the
-current development branch. It is not yet live at `scooteruniverse.eu`.
-Before updating the existing service, apply migration `0004_account_login.sql`
-to its existing D1 database and set `ACCOUNT_PEPPER` on the Worker; deploying
-the new code without both would leave account login unavailable. Existing
-token-only accounts can add a username and password with their original token.
+The account flow is live at `scooteruniverse.eu/factorio-relay`. Migration
+`0004_account_login.sql` and the `ACCOUNT_PEPPER` Worker secret were applied
+to the existing private pilot on 2026-09-26. Existing token-only accounts can
+add a username and password with their original token.
 
 This prepares a two-PC test with **copies** of a Factorio save. The service
 also has a `workers.dev` HTTPS fallback. The browser panel is routed to
@@ -13,6 +11,14 @@ also has a `workers.dev` HTTPS fallback. The browser panel is routed to
 use the only copy of an existing world. The current Worker relay accepts at
 most 90,000,000-byte ZIPs remotely; larger saves need direct R2 upload. The
 app does not yet watch or replace the live game save.
+
+For the first save test, close Factorio and copy the latest agreed world ZIP
+outside the game's saves folder. Keep the original ZIP untouched. If the copy
+is under 90,000,000 bytes, one player can upload it through the browser panel
+as revision #1. The other player should refresh the panel, download that
+revision and verify the ZIP copy before using it. The panel shows world members,
+but it does not indicate who is online. Do not use this manual test as
+automatic synchronization or host the same world simultaneously.
 
 ## Cost limits for this test service
 
