@@ -2,7 +2,7 @@ import { deflateRawSync } from "node:zlib";
 
 // A tiny, valid ZIP generated in memory. This is synthetic test
 // data, not a real Factorio save. No game files are read.
-export function testZip(text = "synthetic relay test", deflate = false, descriptor = false) {
+export function testZip(text = "synthetic relay test", deflate = false, descriptor = false, wideDescriptor = false, signedDescriptor = true) {
   const name = Buffer.from("test-world/level.dat");
   const content = Buffer.from(text);
   const payload = deflate ? deflateRawSync(content) : content;
@@ -34,12 +34,18 @@ export function testZip(text = "synthetic relay test", deflate = false, descript
   central.writeUInt32LE(content.length, 24);
   central.writeUInt16LE(name.length, 28);
   const end = Buffer.alloc(22);
-  const dataDescriptor = Buffer.alloc(descriptor ? 16 : 0);
+  const dataDescriptor = Buffer.alloc(descriptor ? (wideDescriptor ? 20 : 12) + (signedDescriptor ? 4 : 0) : 0);
   if (descriptor) {
-    dataDescriptor.writeUInt32LE(0x08074b50, 0);
-    dataDescriptor.writeUInt32LE(crc, 4);
-    dataDescriptor.writeUInt32LE(payload.length, 8);
-    dataDescriptor.writeUInt32LE(content.length, 12);
+    const start = signedDescriptor ? 4 : 0;
+    if (signedDescriptor) dataDescriptor.writeUInt32LE(0x08074b50, 0);
+    dataDescriptor.writeUInt32LE(crc, start);
+    if (wideDescriptor) {
+      dataDescriptor.writeBigUInt64LE(BigInt(payload.length), start + 4);
+      dataDescriptor.writeBigUInt64LE(BigInt(content.length), start + 12);
+    } else {
+      dataDescriptor.writeUInt32LE(payload.length, start + 4);
+      dataDescriptor.writeUInt32LE(content.length, start + 8);
+    }
   }
   end.writeUInt32LE(0x06054b50, 0);
   end.writeUInt16LE(1, 8);

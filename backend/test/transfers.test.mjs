@@ -340,6 +340,28 @@ test("deflated ZIPs with and without data descriptors validate and round-trip", 
   }
 });
 
+test("ZIPs with 64-bit data descriptors validate and round-trip", async () => {
+  for (const deflate of [false, true]) for (const signed of [false, true]) {
+    const ctx = await setup();
+    const bytes = testZip("Factorio-style descriptor ".repeat(100), deflate, true, true, signed);
+    const upload = await begin(ctx, bytes);
+    assert.equal((await put(ctx, upload, bytes)).status, 200);
+    assert.equal((await finish(ctx, upload)).status, 200);
+    assert.deepEqual((await download(ctx)).bytes, bytes);
+  }
+});
+
+test("64-bit data descriptors with nonzero high words cannot publish", async () => {
+  const ctx = await setup();
+  const bytes = Buffer.from(testZip("Invalid 64-bit descriptor", true, true, true));
+  const central = bytes.readUInt32LE(bytes.length - 6);
+  bytes[central - 12] ^= 1;
+  const upload = await begin(ctx, bytes);
+  assert.equal((await put(ctx, upload, bytes)).status, 200);
+  assert.equal((await finish(ctx, upload)).body.error.code, "invalid_zip");
+  assert.equal(await current(ctx), 0);
+});
+
 test("ZIP with a matching SHA but corrupt entry CRC or deflate data never publishes", async () => {
   for (const compressed of [false, true]) {
     const ctx = await setup();
