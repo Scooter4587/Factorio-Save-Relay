@@ -60,7 +60,7 @@ export async function validateZip(bucket: R2Bucket, key: string, size: number): 
   entries.sort((a, b) => a.offset - b.offset);
   if (entries[0]!.offset !== 0) invalid();
   let previousEnd = 0;
-  for (const entry of entries) {
+  for (const [index, entry] of entries.entries()) {
     if (entry.offset !== previousEnd) invalid();
     const local = view(await range(bucket, key, entry.offset, 30));
     if (local.getUint32(0, true) !== 0x04034b50 || local.getUint16(6, true) !== entry.flags
@@ -73,13 +73,23 @@ export async function validateZip(bucket: R2Bucket, key: string, size: number): 
     previousEnd = dataOffset + entry.compressed;
     if (previousEnd > directoryOffset) invalid();
     if (entry.flags & 8) {
-      if (previousEnd + 12 > directoryOffset) invalid();
-      const descriptor = view(await range(bucket, key, previousEnd, Math.min(16, directoryOffset - previousEnd)));
-      const signed = descriptor.getUint32(0, true) === 0x08074b50;
+      // Factorio may write 64-bit descriptor sizes even when the archive's
+      // central directory and total file size fit within ZIP32.
+      const nextOffset = entries[index + 1]?.offset ?? directoryOffset;
+      const descriptorSize = nextOffset - previousEnd;
+      if (![12, 16, 20, 24].includes(descriptorSize)) invalid();
+      const descriptor = view(await range(bucket, key, previousEnd, descriptorSize));
+      const signed = descriptorSize === 16 || descriptorSize === 24;
+      const wide = descriptorSize === 20 || descriptorSize === 24;
       const start = signed ? 4 : 0;
-      if (descriptor.byteLength < start + 12 || descriptor.getUint32(start, true) !== entry.crc
-        || descriptor.getUint32(start + 4, true) !== entry.compressed || descriptor.getUint32(start + 8, true) !== entry.expanded) invalid();
-      previousEnd += start + 12;
+      if (signed && descriptor.getUint32(0, true) !== 0x08074b50) invalid();
+      if (descriptor.getUint32(start, true) !== entry.crc) invalid();
+      if (wide) {
+        if (descriptor.getBigUint64(start + 4, true) !== BigInt(entry.compressed)
+          || descriptor.getBigUint64(start + 12, true) !== BigInt(entry.expanded)) invalid();
+      } else if (descriptor.getUint32(start + 4, true) !== entry.compressed
+        || descriptor.getUint32(start + 8, true) !== entry.expanded) invalid();
+      previousEnd = nextOffset;
     }
     if (entry.compressed === 0) {
       if (entry.method !== 0 || entry.expanded !== 0 || entry.crc !== 0) invalid();
