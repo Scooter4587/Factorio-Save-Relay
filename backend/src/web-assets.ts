@@ -37,13 +37,15 @@ export const PAGE = String.raw`<!doctype html>
 <section id="world-panel" hidden><div class="grid"><article class="card world-card"><div class="step">ZVOLENÝ SVET</div><h3 id="world-title"></h3><dl><div><dt>Aktuálna verzia</dt><dd id="revision">—</dd></div><div><dt>Hostiteľ</dt><dd id="host">—</dd></div><div><dt>Tvoja rola</dt><dd id="role">—</dd></div></dl><div class="world-members"><h4>Hráči sveta</h4><ul id="world-members"></ul><p class="small">Toto je zoznam členov, nie stav online.</p></div><button id="refresh" class="secondary" type="button">Obnoviť stav</button></article>
 <article class="card"><div class="step">ODOVZDANIE</div><h3>Aktuálny save</h3><p>Stiahni a over aktuálny ZIP pred ďalším hostovaním. Ukladá sa do priečinka sťahovania, nie priamo do Factorio saves.</p><button id="download" type="button">Stiahnuť aktuálny ZIP ↓</button><p id="download-state" class="small"></p></article></div>
 <div class="grid lower"><article class="card"><div class="step">NAHRAŤ NOVÚ VERZIU</div><h3>Odovzdať save</h3><p>Po skončení hry vyber kópiu Factorio save ZIPu. Pred odovzdaním musíš mať v tejto relácii stiahnutú aktuálnu verziu.</p>
-<form id="upload-form"><label>Save ZIP<input id="save-file" type="file" accept=".zip,application/zip" required></label><button type="submit">Nahrať a odovzdať ↑</button></form><p class="small">Limit testovacej služby: 90 MB na ZIP; pri kolízii sa aktuálny svet neprepíše.</p></article>
+<form id="upload-form"><label>Save ZIP<input id="save-file" type="file" accept=".zip,application/zip" required></label><button type="submit">Nahrať a odovzdať ↑</button></form><div id="upload-progress" class="upload-progress" role="status" aria-live="polite" hidden><p id="upload-progress-label">Pripravujem nahrávanie…</p><progress id="upload-progress-bar" max="100" value="0"></progress></div><p class="small">Limit testovacej služby: 90 MB na ZIP; pri kolízii sa aktuálny svet neprepíše.</p></article>
 <article class="card"><div class="step">HRÁČI</div><h3>Pozvánka</h3><p>Vlastník môže vytvoriť jednorazový kód platný 24 hodín.</p><button id="create-invite" class="secondary" type="button">Vytvoriť pozvánku</button><div id="invite-result" hidden><p>Kód pošli druhému hráčovi súkromne:</p><code id="invite-output"></code></div></article></div>
 <article class="card history"><div class="step">HISTÓRIA</div><h3>Verzie sveta</h3><div id="revisions" class="revision-list">Zatiaľ žiadne verzie.</div></article>
 <article class="card app-next"><div class="step">KROK 3 / PC APLIKÁCIA</div><h3>Pripoj svoje PC</h3><p>Po spárovaní hráčov sa do aplikácie prihlásiš týmto účtom a vyberieš lokálny save. Aktuálna testovacia aplikácia ešte nepracuje bezpečne s reálnym Factorio saves priečinkom; verejné stiahnutie pripravíme po dvojpočítačovom teste.</p></article></section></section>
 <footer>Factorio Save Relay · súkromný test · existujúci save na PC zostáva nedotknutý</footer></main></div></body></html>`;
 
 export const STYLE = String.raw`:root{font-family:Inter,Segoe UI,Arial,sans-serif;color:#f3f0e8;background:#121b23;font-synthesis:none}*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 72% 9%,#34494c 0,#17232b 31%,#111920 70%);min-height:100vh}button,input{font:inherit}button{cursor:pointer;border:0;border-radius:8px;padding:13px 18px;background:#d4ff54;color:#14201c;font-weight:750;transition:transform .15s,opacity .15s}button:hover{transform:translateY(-2px)}button:disabled{opacity:.45;cursor:wait;transform:none}.secondary{background:#25363c;color:#e9f3e0;border:1px solid #4c6262}.text-button{background:transparent;color:#c9e990;padding:8px}.shell{max-width:1160px;margin:auto;padding:0 28px}.top{height:80px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #3b4c50}.brand{text-decoration:none;color:#fff;font-weight:900;letter-spacing:.09em}.brand span{color:#d4ff54}.tag,.step,.eyebrow{font-size:11px;font-weight:800;letter-spacing:.19em;color:#d4ff54}.tag{border:1px solid #658062;border-radius:99px;padding:9px 12px}.hero{padding:76px 0 52px;max-width:710px}.hero h1{font-size:clamp(44px,6.5vw,83px);line-height:1.02;letter-spacing:-.055em;margin:20px 0}.hero p{font-size:18px;line-height:1.6;color:#becdca;max-width:590px}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}.card{background:#1e2c33;border:1px solid #405258;border-radius:15px;padding:28px;box-shadow:0 16px 35px #0911162e}.card h2,.card h3{font-size:25px;margin:15px 0 10px;letter-spacing:-.03em}.card p{color:#b4c4c0;line-height:1.55}.card form{display:flex;flex-direction:column;gap:14px;margin-top:25px}.card label{display:flex;flex-direction:column;gap:7px;color:#dce7e0;font-size:13px;font-weight:650}.card input{width:100%;background:#132028;color:#fff;border:1px solid #506369;border-radius:7px;padding:12px 13px;outline:none}.card input:focus{border-color:#d4ff54}.card input[type=file]{cursor:pointer}.notice{padding:14px 18px;margin:0 0 20px;border:1px solid #d4ff54;border-radius:8px;background:#293a2c;color:#f5ffe0}.notice.error{border-color:#ef8b76;background:#3c2928}.recovery{margin:18px 0;border-color:#d4ff54}.recovery code,.card code{display:block;overflow-wrap:anywhere;padding:13px;background:#0e191f;border:1px solid #536b68;border-radius:7px;color:#d4ff54;margin:15px 0}.dashboard-head{display:flex;justify-content:space-between;align-items:end;margin-bottom:20px}.dashboard-head h2{font-size:36px;margin:8px 0}.world-card dl{margin:24px 0}.world-card dl div{display:flex;justify-content:space-between;border-top:1px solid #405258;padding:12px 0;gap:12px}.world-card dt{color:#a9bab7}.world-card dd{margin:0;text-align:right;font-weight:750}.world-members{margin:0 0 20px}.world-members h4{font-size:16px;margin:0 0 10px}.world-members ul{list-style:none;margin:0;padding:0}.world-members li{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-top:1px solid #405258}.world-members li span:first-child{overflow-wrap:anywhere}.member-role{color:#d4ff54;font-size:12px;font-weight:750}.world-members .small{margin:8px 0 0;color:#9fb0ac}.lower{margin-top:18px}.small{font-size:13px}.history{margin-top:18px}.revision-row{display:flex;justify-content:space-between;gap:20px;border-top:1px solid #405258;padding:14px 0;align-items:center}.revision-row span{color:#b5c4c0}.revision-row button{padding:8px 11px;white-space:nowrap}.access{max-width:560px}.auth-choice{display:flex;gap:10px;margin-bottom:14px}.auth-choice button{flex:1}.auth-panel{min-height:330px}.auth-panel .text-button{margin-top:15px}.onboarding{color:#dce7e0;margin:0 0 18px}.app-next{margin-top:18px;border-color:#637b57}footer{padding:40px 0;color:#899f9e;font-size:12px}[hidden]{display:none!important}@media(max-width:700px){.shell{padding:0 18px}.top{height:68px}.tag{font-size:9px;letter-spacing:.08em}.hero{padding:48px 0 32px}.grid{grid-template-columns:1fr}.card{padding:22px}.dashboard-head h2{font-size:29px}}`;
+
+export const UPLOAD_STYLE = String.raw`.upload-progress{margin:16px 0 0}.upload-progress p{margin:0 0 8px;color:#dce7e0;font-size:14px}.upload-progress progress{display:block;width:100%;height:16px;accent-color:#d4ff54}`;
 
 export const SCRIPT = String.raw`'use strict';
 const base = '/factorio-relay/v1';
@@ -67,7 +69,7 @@ async function api(path, options = {}) {
   if (!response.ok) {
     let data = {};
     try { data = await response.json(); } catch (_) {}
-    const err = new Error(status(data.error || {}));
+    const err = new Error(data.error ? status(data.error) : 'Server vrátil HTTP ' + response.status + ' bez podrobností.');
     err.code = data.error && data.error.code;
     throw err;
   }
@@ -75,6 +77,36 @@ async function api(path, options = {}) {
 }
 async function data(path, body, method = 'POST', headers = {}) {
   return (await api(path, { method, headers: { 'content-type':'application/json', ...headers }, body:JSON.stringify(body) })).json();
+}
+function uploadProgress(message, percent = null) {
+  $('upload-progress').hidden = false;
+  $('upload-progress-label').textContent = message;
+  const bar = $('upload-progress-bar');
+  if (percent === null) bar.removeAttribute('value');
+  else bar.value = Math.max(0, Math.min(100, percent));
+}
+function putUpload(path, file, token) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', base + path);
+    xhr.withCredentials = true;
+    xhr.setRequestHeader('content-type', 'application/zip');
+    xhr.setRequestHeader('x-relay-lock', token);
+    xhr.upload.onprogress = event => {
+      const percent = Math.min(100, Math.floor(event.loaded / file.size * 100));
+      uploadProgress('Prenos ZIPu: ' + percent + ' % (' + (event.loaded / 1048576).toFixed(1) + ' / ' + (file.size / 1048576).toFixed(1) + ' MB)', percent);
+    };
+    xhr.upload.onload = () => uploadProgress('Súbor bol odoslaný. Čakám na potvrdenie servera…', 100);
+    xhr.onerror = () => reject(new Error('Spojenie sa počas prenosu prerušilo. Skontroluj internet a skús to znova.'));
+    xhr.onabort = () => reject(new Error('Prenos bol prerušený.'));
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) { resolve(); return; }
+      let error;
+      try { error = JSON.parse(xhr.responseText).error; } catch (_) {}
+      reject(new Error(error ? status(error) : 'Server odmietol prenos (HTTP ' + xhr.status + ').'));
+    };
+    xhr.send(file);
+  });
 }
 function working(value) {
   busy = value;
@@ -170,35 +202,51 @@ async function upload() {
   const file = $('save-file').files[0];
   if (!file || !file.name.toLowerCase().endsWith('.zip')) throw new Error('Vyber Factorio save ZIP.');
   if (file.size < 22 || file.size > 90000000) throw new Error('ZIP musí mať 22 bajtov až 90 MB.');
-  await refresh();
-  if (world.hostDeviceId) throw new Error('Svet momentálne drží hostiteľ. Skús to po jeho odovzdaní.');
-  if (world.currentRevision > 0 && downloadedRevision !== world.currentRevision) {
-    throw new Error('Najprv stiahni a over aktuálnu verziu #' + world.currentRevision + ' v tejto relácii.');
-  }
-  const baseRevision = world.currentRevision;
-  const sha256 = await digest(await file.arrayBuffer());
+  $('notice').hidden = true;
   let token = null; let timer = null; let renewalError = null;
+  let phase = 'Kontrola stavu sveta';
   try {
+    uploadProgress('Kontrolujem stav sveta…');
+    await refresh();
+    if (world.hostDeviceId) throw new Error('Svet momentálne drží hostiteľ. Skús to po jeho odovzdaní.');
+    if (world.currentRevision > 0 && downloadedRevision !== world.currentRevision) {
+      throw new Error('Najprv stiahni a over aktuálnu verziu #' + world.currentRevision + ' v tejto relácii.');
+    }
+    const baseRevision = world.currentRevision;
+    phase = 'Kontrola ZIPu';
+    uploadProgress('Počítam kontrolný súčet ZIPu…');
+    const sha256 = await digest(await file.arrayBuffer());
+    phase = 'Získanie hostovania';
+    uploadProgress('Získavam právo na odovzdanie…');
     const claim = await data('/worlds/' + world.id + '/lock/acquire', {expectedRevision:baseRevision});
     token = claim.lease.token;
     timer = setInterval(async () => {
       try { await data('/worlds/' + world.id + '/lock/renew', {lockToken:token}); }
       catch (error) { renewalError = error; clearInterval(timer); }
     }, 60000);
-    notice('Nahrávam ZIP. Stránku nezatváraj.');
+    phase = 'Príprava nahrávania';
+    uploadProgress('Pripravujem nahrávanie na serveri…');
     const begun = await data('/worlds/' + world.id + '/uploads/begin', {baseRevision,lockToken:token,sha256,fileSize:file.size});
     const content = begun.upload.contentPath;
     if (!content.startsWith('/v1/worlds/' + world.id + '/uploads/')) throw new Error('Služba vrátila neplatnú adresu nahrávania.');
-    await api(content.slice(3), {method:'PUT',headers:{'content-type':'application/zip','x-relay-lock':token},body:file});
+    phase = 'Prenos ZIPu';
+    uploadProgress('Prenos ZIPu: 0 %', 0);
+    await putUpload(content.slice(3), file, token);
     if (renewalError) throw renewalError;
+    phase = 'Overenie a zverejnenie verzie';
+    uploadProgress('Overujem ZIP a zverejňujem verziu…');
     const result = await data('/worlds/' + world.id + '/uploads/finalize', {uploadId:begun.upload.id,lockToken:token});
     downloadedRevision = -1;
     $('save-file').value = '';
+    uploadProgress('Hotovo: verzia #' + result.revision.revision + ' je dostupná.', 100);
     notice('Save ZIP bol overený a odovzdaný ako verzia #' + result.revision.revision + '. Druhý hráč ho teraz môže stiahnuť.');
+  } catch (error) {
+    uploadProgress('Nahrávanie sa zastavilo: ' + phase + '.');
+    throw new Error(phase + ': ' + (error.message || 'Požiadavka zlyhala.'));
   } finally {
     if (timer) clearInterval(timer);
     if (token) { try { await data('/worlds/' + world.id + '/lock/release', {lockToken:token}); } catch (_) {} }
-    await refresh();
+    try { await refresh(); } catch (_) { /* Keep the upload result visible if status refresh fails. */ }
   }
 }
 async function boot() {
