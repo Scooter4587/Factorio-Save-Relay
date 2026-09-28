@@ -1,102 +1,47 @@
-# Windows client — manual test
+# Windows aplikácia
 
-This .NET 10 WPF client connects to localhost or an HTTPS test service. For the
-hosted private pilot, create and pair accounts on the web first, then use
-**Sign in on this PC** with the same account name and password. The app stores
-its device credential in Windows Credential Manager, not the password.
-The test build defaults to the private pilot's `workers.dev` API address; the
-custom domain remains the browser interface.
-The legacy local test registration remains for the two-window development demo.
-The client can create/join a shared world, acquire and renew the host
-lease, upload a stable selected ZIP automatically while hosting, download the
-current revision and restore a
-retained revision. Credentials are stored in Windows Credential Manager under
-the current Windows user, keyed by service URL and profile name. A registration
-token is not written to the repository or displayed in the interface. A hosted
-service requires a separate registration key only when creating an account on
-the web; the key is not saved by the app. See [the remote service guide](../backend/remote-test.md)
-when ready for a two-PC test.
+Windows aplikácia je predĺžená ruka účtu a spoločného sveta vytvoreného na webe. Registráciu, obnovu účtu, vytvorenie sveta a pozvánku druhému hráčovi rieši iba web. Aplikácia sa prihlási tým istým menom a heslom, vytvorí zariadenie a jeho token uloží do Windows Credential Managera. Heslo neukladá.
 
-## Start the local service
+## Bezpečný RELAY save
 
-From `backend/`:
+Prvotné nastavenie robí vlastník sveta na jednom PC:
 
-```powershell
-npm ci
-npm run db:migrate:local
-npm run dev
-```
+1. Zavrie Factorio a v aplikácii vyberie existujúci ZIP save.
+2. Aplikácia overí ZIP a vytvorí vedľa neho samostatnú kópiu s názvom `<pôvodný názov> RELAY.zip` v `%APPDATA%\Factorio\saves`.
+3. Pôvodný ZIP neupraví ani neprepíše. Názov RELAY súboru sa natrvalo uloží k spoločnému svetu.
+4. Overenú RELAY kópiu nahrá ako prvú cloudovú revíziu.
 
-This uses an emulated D1 database and a private local R2 bucket. The service
-listens on `http://127.0.0.1:8787`; no domain or Cloudflare account is needed.
+Druhý hráč sa prihlási vo svojej aplikácii a stlačí **Synchronizovať**. Dostane ten istý pomenovaný RELAY save do svojho Factorio saves priečinka. Od tej chvíle obaja vo Factoriu otvárajú a ukladajú iba RELAY save.
 
-In a second PowerShell window at the repository root:
+Pred prepísaním existujúceho RELAY save aplikácia overí veľkosť, SHA-256 a čitateľnosť ZIPu. Predchádzajúcu lokálnu verziu uloží mimo Factorio saves do `%LOCALAPPDATA%\FactorioSaveRelay\backups`. Nikdy automaticky nemení pôvodný save, z ktorého vznikla prvá kópia.
 
-```powershell
-dotnet run --project client/FactorioSaveRelay.Client/FactorioSaveRelay.Client.csproj
-```
+## Bežné hostovanie
 
-Open a second client window for a second profile if you want to see both users
-at once. The service and both windows must run on the same PC for this test.
+Správne poradie je:
 
-To create a portable Windows test build, run `client/publish-test.ps1` from
-PowerShell at the repository root. It produces a self-contained ZIP in ignored
-`artifacts/`; copy the archive to the second Windows PC and extract it before
-running `FactorioSaveRelay.exe`. GitHub CI also attaches a short-lived Windows
-test build to each PR run. The executable is not signed or installed as a
-Windows service and must be opened manually.
+1. **Synchronizovať** a počkať na stav `SYNCHRONIZOVANÉ`.
+2. **Prevziať hostovanie**. Cloudový lease zabráni druhému PC súčasne publikovať inú históriu.
+3. Vo Factoriu otvoriť presne zobrazený `RELAY.zip`, hrať a uložiť.
+4. Zavrieť Factorio.
+5. **Uložiť a odovzdať**. Aplikácia overí stabilný ZIP, nahrá novú revíziu a až potom uvoľní hostovanie.
 
-## Test with copies
+Počas hostovania aplikácia lease obnovuje, sleduje zmenu RELAY súboru a po zavretí Factoria vie zmenu nahrať. Odovzdanie odmietne, ak Factorio stále beží, save sa ešte mení alebo sa po hraní vôbec nezmenil. Aplikáciu nemožno zavrieť, kým drží hostovanie.
 
-1. Create two separate folders outside `%APPDATA%\Factorio\saves`, such as
-   `backend/artifacts/manual-test/adam` and `backend/artifacts/manual-test/friend`.
-   Only use ZIP copies here. The client refuses to select the real Factorio
-   saves folder, a linked path or a junction.
-2. In the first window enter profile `Adam` and register. Create a world and
-   invitation; copy the one-time code.
-3. Select an existing valid ZIP **copy** in Adam's test folder. Acquire host
-   lease and wait for the automatic upload status, then release the lease.
-4. In the second window register profile `Friend`, paste the invitation and
-   join. Choose a ZIP target in Friend's test folder, then download latest.
-   If a target exists, its previous bytes are saved as a sibling
-   `.relay-backup-*.zip` before atomic replacement.
-5. Friend can acquire the lease. After changing only the test ZIP copy to a
-   different valid archive, wait for its automatic upload and release. Adam
-   can then download the newer revision and keep a local backup.
+## Vývoj a build
 
-The client checks downloaded size, SHA-256 and ZIP readability before any local
-replacement. A download is staged as a `.download-*` file in the same folder.
-If Factorio is running, the file stays pending until you close the game and
-click **Apply pending download**. The client does not close or control Factorio.
-Keep the client open until applying a pending download; recovery of a pending
-file after restarting the app is not implemented yet.
-The client watches the selected ZIP while holding the host lease and also polls
-its size and modified time every five seconds. It waits for a stable file,
-validates a separate upload snapshot and sends only changed content. Releasing
-the lease attempts one final upload and refuses to release while Factorio is
-running or the file is changing. The selected source file is never edited by
-the transfer. An active lease renews every minute; losing it blocks publishing.
-
-**This is still a test-copy workflow.** The client does not launch Factorio or
-watch the real game's save folder. It intentionally blocks that folder, and
-remote testing needs your own private Cloudflare service. The current remote
-Worker relay accepts only ZIPs up to 90,000,000 bytes. Automatic download,
-real-game integration, direct R2 uploads and a production installer are
-still pending. A ZIP can pass archive checks yet be incompatible with your
-installed Factorio version or mods. Do not treat this stage as a production
-save synchronizer.
-
-The service has a synthetic file demo that never reads a Factorio save:
+Klient vyžaduje Windows a .NET 10 SDK:
 
 ```powershell
-cd backend
-npm run demo:transfer
+dotnet build client/FactorioSaveRelay.Client/FactorioSaveRelay.Client.csproj -c Release
+dotnet run --project client/FactorioSaveRelay.SafetyTests/FactorioSaveRelay.SafetyTests.csproj -c Release
 ```
 
-The client safety test creates only temporary ZIPs and validates backup,
-checksum and game-running guards. With the local service running, `--api` also
-tests the client's actual HTTP code with two disposable users:
+S lokálnym Workerom na `http://127.0.0.1:8787` pridaj `--api`; test použije iba syntetické ZIPy a dočasné účty:
 
 ```powershell
-dotnet run --project client/FactorioSaveRelay.SafetyTests/FactorioSaveRelay.SafetyTests.csproj --configuration Release -- --api
+dotnet run --project client/FactorioSaveRelay.SafetyTests/FactorioSaveRelay.SafetyTests.csproj -c Release -- --api
 ```
+
+`client/publish-test.ps1` vytvorí samostatný win-x64 ZIP v ignorovanom priečinku `artifacts/`. Živá aplikácia používa súkromný API endpoint a jej ZIP web vydá iba prihlásenému používateľovi. Samotný stiahnutý súbor však možno ďalej skopírovať; bezpečnosť dát stojí na povinnom prihlásení aplikácie, nie na utajení EXE.
+
+Klient zatiaľ očakáva presne jeden spoločný svet na účet a Factorio nespúšťa ani nezatvára. ZIP môže byť technicky platný, ale nekompatibilný s nainštalovanou verziou Factoria alebo modmi; to dokáže potvrdiť až reálny test hry.

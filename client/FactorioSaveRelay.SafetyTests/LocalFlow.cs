@@ -26,6 +26,10 @@ internal static class LocalFlow
         var root = "/v1/worlds/" + created.GetProperty("world").GetProperty("id").GetString();
         var invite = await a.JsonAsync(HttpMethod.Post, root + "/invites");
         await b.JsonAsync(HttpMethod.Post, "/v1/invites/redeem", new { code = invite.GetProperty("invite").GetProperty("code").GetString() });
+        await a.JsonAsync(HttpMethod.Post, root + "/relay-file", new { fileName = "Disposable client test RELAY.zip" });
+        var pairedWorld = (await b.JsonAsync(HttpMethod.Get, root)).GetProperty("world");
+        if (pairedWorld.GetProperty("relayFileName").GetString() != "Disposable client test RELAY.zip")
+            throw new Exception("Paired client did not receive the canonical relay filename.");
 
         var aFile = Path.Combine(folder, "adam-copy.zip");
         var bFile = Path.Combine(folder, "friend-copy.zip");
@@ -33,6 +37,9 @@ internal static class LocalFlow
         await File.WriteAllBytesAsync(bFile, Zip("Friend has an old local copy"));
         var first = await a.JsonAsync(HttpMethod.Post, root + "/lock/acquire", new { expectedRevision = 0 });
         var aLease = first.GetProperty("lease").GetProperty("token").GetString()!;
+        var hostedWorld = (await b.JsonAsync(HttpMethod.Get, root)).GetProperty("world");
+        if (hostedWorld.GetProperty("hostDisplayName").GetString() != "Client test Adam")
+            throw new Exception("The other client could not see who is hosting.");
         var firstRevision = await Upload(a, root, aLease, aFile, 0);
         await a.JsonAsync(HttpMethod.Post, root + "/lock/release", new { lockToken = aLease });
         using (var response = await b.OpenDownloadAsync(root + "/download"))

@@ -1,10 +1,10 @@
 import { ApiError, json } from "./http";
 import { authenticate, register, tokenHash } from "./identity";
-import { createInvite, createWorld, getWorldDetails, listWorlds, redeemInvite } from "./worlds";
+import { configureRelayFile, createInvite, createWorld, getWorldDetails, listWorlds, redeemInvite } from "./worlds";
 import { acquireLease, changeLease } from "./leases";
 import { beginUpload, putContent, finalizeUpload, listRevisions, download, restoreRevision, cleanupRetention } from "./transfers";
 import { meteredBucket } from "./cost-guard";
-import { browserAsset, browserRequest, browserSession } from "./web";
+import { browserAppDownload, browserAsset, browserRequest, browserSession } from "./web";
 import { createAccount, loginAccount, recoverAccount, upgradeAccount } from "./accounts";
 
 interface Env {
@@ -44,6 +44,11 @@ async function handle(request: Request, env: Env): Promise<Response> {
       }
       if (pathname === "/factorio-relay/app.js" && method === "GET") return browserAsset("script");
       if (pathname === "/factorio-relay/style.css" && method === "GET") return browserAsset("style");
+      if (pathname === "/factorio-relay/download/windows" && method === "GET") {
+        if (!env.DB) throw new ApiError(503, "database_unavailable", "Database binding is not configured.");
+        if (!env.SAVES) throw new ApiError(503, "storage_unavailable", "Application storage is not configured.");
+        return await browserAppDownload(request, env.DB, meteredBucket(env.DB, env.SAVES));
+      }
       if (pathname === "/factorio-relay/v1/browser/session") {
         if (!env.DB) throw new ApiError(503, "database_unavailable", "Database binding is not configured.");
         return await browserSession(request, env.DB, env.ACCOUNT_PEPPER);
@@ -57,6 +62,7 @@ async function handle(request: Request, env: Env): Promise<Response> {
       if (method === "GET" && pathname === "/v1/version") return json({ version: SERVICE_VERSION });
 
       const worldMatch = /^\/v1\/worlds\/([0-9a-f-]{36})(\/invites)?$/.exec(pathname);
+      const relayFileMatch = /^\/v1\/worlds\/([0-9a-f-]{36})\/relay-file$/.exec(pathname);
       const leaseMatch = /^\/v1\/worlds\/([0-9a-f-]{36})\/lock\/(acquire|renew|release)$/.exec(pathname);
       const uploadMatch = /^\/v1\/worlds\/([0-9a-f-]{36})\/uploads\/(begin|finalize)$/.exec(pathname);
       const contentMatch = /^\/v1\/worlds\/([0-9a-f-]{36})\/uploads\/([0-9a-f-]{36})\/content$/.exec(pathname);
@@ -75,6 +81,7 @@ async function handle(request: Request, env: Env): Promise<Response> {
         || (["GET", "POST"].includes(method) && pathname === "/v1/worlds")
         || (method === "POST" && pathname === "/v1/invites/redeem")
         || (method === "POST" && leaseMatch)
+        || (method === "POST" && relayFileMatch)
         || transfer
         || (worldMatch && ((method === "GET" && !worldMatch[2]) || (method === "POST" && worldMatch[2])));
       if (!recognized) throw new ApiError(404, "not_found", "The requested endpoint does not exist.");
@@ -117,6 +124,7 @@ async function handle(request: Request, env: Env): Promise<Response> {
         return method === "GET" ? await listWorlds(env.DB, identity) : await createWorld(request, env.DB, identity, env.PRIVATE_PILOT === "true");
       }
       if (pathname === "/v1/invites/redeem") return await redeemInvite(request, env.DB, identity);
+      if (relayFileMatch) return await configureRelayFile(request, env.DB, relayFileMatch[1]!, identity);
       if (leaseMatch) {
         const worldId = leaseMatch[1]!;
         const action = leaseMatch[2];

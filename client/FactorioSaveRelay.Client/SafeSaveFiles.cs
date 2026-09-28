@@ -12,6 +12,45 @@ internal static class SafeSaveFiles
 {
     private const long MaximumLocalTransfer = 512L * 1024 * 1024;
 
+    public static string FactorioSavesDirectory => Path.GetFullPath(Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Factorio", "saves"));
+
+    public static string RelayFileNameFromSource(string source)
+    {
+        var name = Path.GetFileNameWithoutExtension(source).Trim();
+        if (name.Length == 0 || name.EndsWith(" RELAY", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Vyber pôvodný save bez koncovky RELAY.");
+        var result = name + " RELAY.zip";
+        if (result.Length > 120 || result.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+            throw new InvalidOperationException("Názov save je príliš dlhý alebo neplatný pre Windows.");
+        return result;
+    }
+
+    public static string RelayPath(string fileName)
+    {
+        if (Path.GetFileName(fileName) != fileName || !fileName.EndsWith(" RELAY.zip", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Služba vrátila neplatný názov relay save.");
+        return CheckRelayPath(Path.Combine(FactorioSavesDirectory, fileName), requireDirectory: false);
+    }
+
+    public static string CheckRelayPath(string path, bool requireDirectory = true)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !Path.IsPathFullyQualified(path))
+            throw new InvalidOperationException("Relay save musí mať úplnú cestu.");
+        var full = Path.GetFullPath(path);
+        var directory = Path.GetDirectoryName(full)!;
+        if (!string.Equals(directory, FactorioSavesDirectory, StringComparison.OrdinalIgnoreCase)
+            || !Path.GetFileName(full).EndsWith(" RELAY.zip", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Aplikácia môže meniť iba súbor s koncovkou RELAY.zip priamo vo Factorio saves.");
+        if (requireDirectory && !Directory.Exists(directory))
+            throw new InvalidOperationException("Factorio saves priečinok neexistuje. Najprv aspoň raz spusti Factorio.");
+        if (Directory.Exists(directory) && File.GetAttributes(directory).HasFlag(FileAttributes.ReparsePoint))
+            throw new InvalidOperationException("Factorio saves priečinok nesmie byť odkaz alebo junction.");
+        if (File.Exists(full) && File.GetAttributes(full).HasFlag(FileAttributes.ReparsePoint))
+            throw new InvalidOperationException("Relay save nesmie byť odkaz.");
+        return full;
+    }
+
     public static string CheckTestPath(string path)
     {
         if (string.IsNullOrWhiteSpace(path) || !Path.IsPathFullyQualified(path))
@@ -19,20 +58,56 @@ internal static class SafeSaveFiles
         var full = Path.GetFullPath(path);
         if (!full.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("Choose a .zip file.");
-        var saves = Path.GetFullPath(Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Factorio", "saves"));
-        if (full.StartsWith(saves + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException("This test version blocks Factorio's real saves folder. Select a copy elsewhere.");
+        if (full.StartsWith(FactorioSavesDirectory + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("This test path blocks Factorio saves. Managed files must end in RELAY.zip.");
         var directory = Path.GetDirectoryName(full)!;
         if (!Directory.Exists(directory)) throw new InvalidOperationException("The target folder does not exist.");
+        CheckNoLinks(directory, full);
+        return full;
+    }
+
+    private static string CheckTransferPath(string path)
+    {
+        var full = Path.GetFullPath(path);
+        return full.StartsWith(FactorioSavesDirectory + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+            ? CheckRelayPath(full) : CheckTestPath(full);
+    }
+
+    private static void CheckNoLinks(string directory, string? file = null)
+    {
         for (var current = new DirectoryInfo(directory); current is not null; current = current.Parent)
         {
             if (current.Attributes.HasFlag(FileAttributes.ReparsePoint))
-                throw new InvalidOperationException("Test path cannot pass through a link or junction.");
+                throw new InvalidOperationException("Save path cannot pass through a link or junction.");
         }
-        if (File.Exists(full) && File.GetAttributes(full).HasFlag(FileAttributes.ReparsePoint))
-            throw new InvalidOperationException("Test ZIP cannot be a link.");
-        return full;
+        if (file is not null && File.Exists(file) && File.GetAttributes(file).HasFlag(FileAttributes.ReparsePoint))
+            throw new InvalidOperationException("Save ZIP cannot be a link.");
+    }
+
+    public static async Task<string> CreateRelayCopyAsync(string source)
+    {
+        if (FactorioRunning()) throw new InvalidOperationException("Najprv zavri Factorio.");
+        source = Path.GetFullPath(source);
+        if (!File.Exists(source) || !source.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Vyber existujúci Factorio ZIP save.");
+        CheckNoLinks(Path.GetDirectoryName(source)!, source);
+        await ValidateZipAsync(source);
+        var saves = FactorioSavesDirectory;
+        if (!Directory.Exists(saves)) throw new InvalidOperationException("Factorio saves priečinok neexistuje. Najprv aspoň raz spusti Factorio.");
+        CheckNoLinks(saves);
+        var target = CheckRelayPath(Path.Combine(saves, RelayFileNameFromSource(source)));
+        if (File.Exists(target)) throw new InvalidOperationException($"{Path.GetFileName(target)} už existuje. Aplikácia ho bez synchronizácie neprepíše.");
+        var temporary = target + ".setup-" + Guid.NewGuid().ToString("N");
+        try
+        {
+            File.Copy(source, temporary, overwrite: false);
+            await ValidateZipAsync(temporary);
+            if (!string.Equals(await Sha256Async(source), await Sha256Async(temporary), StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Relay kópia sa nezhoduje s pôvodným save.");
+            File.Move(temporary, target);
+            return target;
+        }
+        catch { if (File.Exists(temporary)) File.Delete(temporary); throw; }
     }
 
     public static bool FactorioRunning()
@@ -76,7 +151,7 @@ internal static class SafeSaveFiles
 
     public static async Task<string?> SnapshotStableAsync(string selectedPath)
     {
-        var source = CheckTestPath(selectedPath);
+        var source = CheckTransferPath(selectedPath);
         var before = new FileInfo(source);
         if (!before.Exists || DateTime.UtcNow - before.LastWriteTimeUtc < TimeSpan.FromSeconds(3)) return null;
         var snapshot = source + ".relay-upload-" + Guid.NewGuid().ToString("N");
@@ -105,9 +180,28 @@ internal static class SafeSaveFiles
         }
     }
 
+    public static async Task<string> SnapshotVerifiedAsync(string selectedPath)
+    {
+        var source = CheckTransferPath(selectedPath);
+        var snapshot = source + ".relay-upload-" + Guid.NewGuid().ToString("N");
+        try
+        {
+            File.Copy(source, snapshot);
+            await ValidateZipAsync(snapshot);
+            if (!string.Equals(await Sha256Async(source), await Sha256Async(snapshot), StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Pripravená relay kópia sa počas kontroly zmenila.");
+            return snapshot;
+        }
+        catch
+        {
+            if (File.Exists(snapshot)) File.Delete(snapshot);
+            throw;
+        }
+    }
+
     public static async Task<PendingDownload> StageAsync(HttpResponseMessage response, string target)
     {
-        target = CheckTestPath(target);
+        target = CheckTransferPath(target);
         var size = response.Content.Headers.ContentLength;
         var sha = response.Headers.TryGetValues("X-Save-Sha256", out var hashes) ? hashes.SingleOrDefault() : null;
         var revisionText = response.Headers.TryGetValues("X-Save-Revision", out var revisions) ? revisions.SingleOrDefault() : null;
@@ -141,9 +235,21 @@ internal static class SafeSaveFiles
         catch { if (File.Exists(temporary)) File.Delete(temporary); throw; }
     }
 
+    private static string BackupPath(string target)
+    {
+        if (!target.StartsWith(FactorioSavesDirectory + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            return target + ".relay-backup-" + DateTime.UtcNow.ToString("yyyyMMddHHmmss")
+                + "-" + Guid.NewGuid().ToString("N") + ".zip";
+        var folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "FactorioSaveRelay", "backups", Path.GetFileNameWithoutExtension(target));
+        Directory.CreateDirectory(folder);
+        return Path.Combine(folder, DateTime.UtcNow.ToString("yyyyMMddHHmmss")
+            + "-" + Guid.NewGuid().ToString("N") + ".zip");
+    }
+
     public static async Task<string?> ApplyAsync(PendingDownload pending, Func<bool>? gameRunning = null)
     {
-        CheckTestPath(pending.Target);
+        CheckTransferPath(pending.Target);
         if ((gameRunning ?? FactorioRunning)()) throw new InvalidOperationException("Factorio is running. Close it before applying this download; the verified file remains pending.");
         var info = new FileInfo(pending.Path);
         if (!info.Exists || info.Length != pending.Size || await Sha256Async(pending.Path) != pending.Sha256)
@@ -154,8 +260,7 @@ internal static class SafeSaveFiles
             File.Move(pending.Path, pending.Target);
             return null;
         }
-        var backup = pending.Target + ".relay-backup-" + DateTime.UtcNow.ToString("yyyyMMddHHmmss")
-            + "-" + Guid.NewGuid().ToString("N") + ".zip";
+        var backup = BackupPath(pending.Target);
         File.Replace(pending.Path, pending.Target, backup);
         return backup;
     }

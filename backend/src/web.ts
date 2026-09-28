@@ -42,6 +42,21 @@ export function browserAsset(kind: "page" | "script" | "style"): Response {
   return new Response(body, { headers });
 }
 
+export async function browserAppDownload(request: Request, db: D1Database, bucket: R2Bucket): Promise<Response> {
+  const token = cookieToken(request);
+  if (!token) throw new ApiError(401, "unauthorized", "Sign in to download the Windows application.");
+  await authenticate(new Request(request.url, { headers: { authorization: `Bearer ${token}` } }), db);
+  const object = await bucket.get("downloads/FactorioSaveRelay-win-x64.zip");
+  if (!object) throw new ApiError(404, "app_unavailable", "The Windows application is not published yet.");
+  return new Response(object.body, { headers: {
+    "content-type": "application/zip",
+    "content-length": String(object.size),
+    "content-disposition": 'attachment; filename="FactorioSaveRelay-win-x64.zip"',
+    "cache-control": "private, no-store",
+    "x-content-type-options": "nosniff",
+  } });
+}
+
 export async function browserSession(request: Request, db: D1Database, pepper?: string): Promise<Response> {
   sameOrigin(request);
   if (request.method === "DELETE") {

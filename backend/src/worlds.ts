@@ -6,9 +6,11 @@ interface World {
   name: string;
   ownerUserId: string;
   currentRevision: number;
+  relayFileName: string | null;
   role: "owner" | "member";
   createdAt: string;
   hostDeviceId: string | null;
+  hostDisplayName: string | null;
   hostLeaseExpiresAt: string | null;
 }
 
@@ -19,9 +21,13 @@ interface WorldMember {
 }
 
 const WORLD_SELECT = `SELECT w.id, w.name, w.owner_user_id AS ownerUserId,
-  w.current_revision AS currentRevision, m.role, w.created_at AS createdAt,
+  w.current_revision AS currentRevision, w.relay_file_name AS relayFileName,
+  m.role, w.created_at AS createdAt,
   CASE WHEN w.lock_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
     THEN w.locked_by_device_id ELSE NULL END AS hostDeviceId,
+  CASE WHEN w.lock_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+    THEN (SELECT u.display_name FROM devices d JOIN users u ON u.id = d.user_id
+      WHERE d.id = w.locked_by_device_id) ELSE NULL END AS hostDisplayName,
   CASE WHEN w.lock_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
     THEN w.lock_expires_at ELSE NULL END AS hostLeaseExpiresAt
   FROM worlds w JOIN world_members m ON m.world_id = w.id`;
@@ -51,6 +57,22 @@ export async function listWorlds(db: D1Database, identity: Identity): Promise<Re
   const { results } = await db.prepare(`${WORLD_SELECT} WHERE m.user_id = ? ORDER BY w.created_at, w.id`)
     .bind(identity.userId).all<World>();
   return json({ worlds: results });
+}
+
+export async function configureRelayFile(request: Request, db: D1Database, worldId: string, identity: Identity): Promise<Response> {
+  const world = await getWorld(db, worldId, identity.userId);
+  if (world.role !== "owner" || world.ownerUserId !== identity.userId) {
+    throw new ApiError(403, "owner_required", "Only the world owner can name the relay save.");
+  }
+  const fileName = textField(await readBody(request), "fileName", 120);
+  if (!/^(?![. ])[^<>:"/\\|?*\u0000-\u001f]{1,110} RELAY\.zip$/i.test(fileName)) {
+    throw new ApiError(400, "invalid_relay_file_name", "Use a plain ZIP filename ending in RELAY.zip.");
+  }
+  const updated = await db.prepare(`UPDATE worlds SET relay_file_name = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ? AND owner_user_id = ? AND (relay_file_name IS NULL OR relay_file_name = ?)
+    RETURNING id`).bind(fileName, worldId, identity.userId, fileName).first<{ id: string }>();
+  if (!updated) throw new ApiError(409, "relay_file_already_configured", "This world already uses a different relay filename.");
+  return json({ world: await getWorldDetails(db, worldId, identity.userId) });
 }
 
 export async function createWorld(request: Request, db: D1Database, identity: Identity, privatePilot = false): Promise<Response> {
