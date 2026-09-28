@@ -3,6 +3,12 @@ import { ApiError } from "./http";
 const MAX_DIRECTORY = 4 * 1024 * 1024;
 const MAX_ENTRIES = 2048;
 const MAX_EXPANDED = 2 * 1024 * 1024 * 1024;
+// Full inflate-and-CRC verification is deliberately bounded. Large Factorio
+// saves contain hundreds of entries; inflating all of them in one request
+// exceeds the free Worker CPU and Cloudflare-service subrequest limits. R2 has
+// already verified the immutable whole-file SHA-256 before this function runs.
+const MAX_DEEP_ENTRIES = 16;
+const MAX_DEEP_EXPANDED = 8 * 1024 * 1024;
 const crcTable = Uint32Array.from({ length: 256 }, (_, n) => {
   let crc = n;
   for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0);
@@ -20,9 +26,10 @@ async function range(bucket: R2Bucket, key: string, offset: number, length: numb
 }
 const view = (bytes: Uint8Array) => new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 
-// Implements the ZIP32 subset in PKWARE APPNOTE. Entry data is decompressed to
-// a CRC counter, never to disk or an unbounded in-memory buffer. This validates
-// archive integrity, not Factorio game/version/mod compatibility.
+// Implements the ZIP32 subset in PKWARE APPNOTE. Every archive gets bounded
+// central-directory and layout validation. Small archives also get per-entry
+// inflate-and-CRC verification; large Factorio saves rely on the R2-verified
+// whole-file SHA-256 so finalization stays within Worker resource limits.
 export async function validateZip(bucket: R2Bucket, key: string, size: number): Promise<void> {
   const tailSize = Math.min(size, 65557);
   const tail = view(await range(bucket, key, size - tailSize, tailSize));
@@ -59,6 +66,16 @@ export async function validateZip(bucket: R2Bucket, key: string, size: number): 
   if (p !== central.byteLength) invalid();
   entries.sort((a, b) => a.offset - b.offset);
   if (entries[0]!.offset !== 0) invalid();
+  for (const [index, entry] of entries.entries()) {
+    const nextOffset = entries[index + 1]?.offset ?? directoryOffset;
+    // The local extra field and an optional data descriptor may add bytes, but
+    // the fixed header, filename and compressed payload must fit before the
+    // next entry. Strict equality is checked below for bounded archives.
+    if (index > 0 && entry.offset <= entries[index - 1]!.offset) invalid();
+    if (entry.offset + 30 + entry.name.length + entry.compressed > nextOffset) invalid();
+  }
+  if (entries.length > MAX_DEEP_ENTRIES || total > MAX_DEEP_EXPANDED) return;
+
   let previousEnd = 0;
   for (const [index, entry] of entries.entries()) {
     if (entry.offset !== previousEnd) invalid();

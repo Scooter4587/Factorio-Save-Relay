@@ -4,7 +4,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { build } from "esbuild";
 import { Miniflare, convertV4MiniflareOptions } from "miniflare";
-import { testZip } from "./zip-fixture.mjs";
+import { multiEntryTestZip, testZip } from "./zip-fixture.mjs";
 
 let mf, db, bucket;
 const sha = bytes => createHash("sha256").update(bytes).digest("hex");
@@ -349,6 +349,18 @@ test("ZIPs with 64-bit data descriptors validate and round-trip", async () => {
     assert.equal((await finish(ctx, upload)).status, 200);
     assert.deepEqual((await download(ctx)).bytes, bytes);
   }
+});
+
+test("large Factorio archives finalize with bounded R2 validation operations", async () => {
+  const ctx = await setup();
+  const bytes = multiEntryTestZip();
+  const upload = await begin(ctx, bytes);
+  assert.equal((await put(ctx, upload, bytes)).status, 200);
+  const before = await db.prepare("SELECT class_b FROM r2_operation_budget ORDER BY period DESC LIMIT 1").first();
+  assert.equal((await finish(ctx, upload)).status, 200);
+  const after = await db.prepare("SELECT class_b FROM r2_operation_budget ORDER BY period DESC LIMIT 1").first();
+  assert.equal(after.class_b - before.class_b, 3);
+  assert.equal(await current(ctx), upload.revision);
 });
 
 test("64-bit data descriptors with nonzero high words cannot publish", async () => {
