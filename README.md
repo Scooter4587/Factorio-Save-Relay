@@ -17,8 +17,8 @@ conflicting histories.
 - Never overwrite a local save until the download and SHA-256 hash are verified.
 - Never promote an upload unless it is based on the current cloud revision.
 - Only the device holding the renewable host lease may publish a new revision.
-- Preserve conflicts instead of guessing which save is correct.
-- Keep the five most recent finalized revisions by default.
+- Preserve conflicts for recovery without ever installing them automatically.
+- Keep exactly the current revision plus four recent recoverable revisions.
 - Never commit credentials, access tokens, or real save files.
 
 ## Planned architecture
