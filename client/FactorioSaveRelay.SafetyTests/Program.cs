@@ -35,6 +35,11 @@ try
     }
     using (var accepted = new RelayApi("https://relay.example.com", "")) { }
 
+    Check(SafeSaveFiles.RelayFileNameFromSource("PYANODON 2.1.zip") == "PYANODON 2.1 RELAY.zip",
+        "Relay filename did not preserve the original name.");
+    try { SafeSaveFiles.RelayFileNameFromSource("PYANODON 2.1 RELAY.zip"); throw new Exception("A relay save was accepted as an original."); }
+    catch (InvalidOperationException) { }
+
     var realSave = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Factorio", "saves", "world.zip");
     try { SafeSaveFiles.CheckTestPath(realSave); throw new Exception("Real saves folder was accepted."); }
     catch (InvalidOperationException) { }
@@ -86,7 +91,7 @@ try
     }
     finally { CredentialStore.Delete("http://127.0.0.1:8787", profile); }
     if (args.Contains("--api")) await LocalFlow.RunAsync(root);
-    Console.WriteLine("PASS: real saves path blocked; bad download preserved source; verified replacement created an exact backup; tampering was rejected.");
+    Console.WriteLine("PASS: RELAY naming is canonical; real saves are protected; verified replacement created an exact backup; tampering was rejected.");
 }
 finally
 {

@@ -10,9 +10,8 @@ internal sealed class RelayApi : IDisposable
 {
     private readonly HttpClient _client;
     private readonly string _token;
-    private readonly string? _registrationKey;
 
-    public RelayApi(string address, string token, string? registrationKey = null)
+    public RelayApi(string address, string token)
     {
         if (!Uri.TryCreate(address, UriKind.Absolute, out var uri)
             || (uri.Scheme != Uri.UriSchemeHttps && !(uri.IsLoopback && uri.Scheme == Uri.UriSchemeHttp))
@@ -22,7 +21,6 @@ internal sealed class RelayApi : IDisposable
         _client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false })
             { BaseAddress = uri, Timeout = TimeSpan.FromMinutes(30) };
         _token = token;
-        _registrationKey = registrationKey;
     }
 
     public async Task<JsonElement> JsonAsync(HttpMethod method, string path, object? body = null)
@@ -61,8 +59,6 @@ internal sealed class RelayApi : IDisposable
             throw new InvalidOperationException("Invalid API path.");
         var request = new HttpRequestMessage(method, path);
         if (_token.Length > 0) request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _token);
-        if (path == "/v1/devices/register" && !string.IsNullOrWhiteSpace(_registrationKey))
-            request.Headers.Add("X-Relay-Registration-Key", _registrationKey);
         return request;
     }
 

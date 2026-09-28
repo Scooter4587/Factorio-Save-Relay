@@ -41,6 +41,8 @@ test("private page is served with CSP and the browser API requires a session", a
   const html = await page.text();
   assert.match(html, /Som tu prvýkrát/);
   assert.match(html, /Hráči sveta/);
+  assert.match(html, /Stiahnuť Windows aplikáciu/);
+  assert.equal((await send("/factorio-relay/download/windows")).status, 401);
   const script = await send("/factorio-relay/app.js");
   assert.equal(script.status, 200);
   assert.match(script.headers.get("content-type"), /javascript/);
@@ -69,6 +71,12 @@ test("registration, cookie sign-in, origin check and logout", async () => {
   assert.equal(worldResponse.status, 201);
   const world = (await payload(worldResponse)).world;
   assert.equal(world.currentRevision, 0);
+  const appBytes = Buffer.from("synthetic windows application");
+  await (await mf.getR2Bucket("SAVES")).put("downloads/FactorioSaveRelay-win-x64.zip", appBytes);
+  const app = await send("/factorio-relay/download/windows", { cookie });
+  assert.equal(app.status, 200);
+  assert.equal(app.headers.get("content-disposition"), 'attachment; filename="FactorioSaveRelay-win-x64.zip"');
+  assert.deepEqual(Buffer.from(await app.arrayBuffer()), appBytes);
   const signedOut = await send(prefix + "/browser/session", { method: "DELETE", cookie });
   assert.match(signedOut.headers.get("set-cookie"), /Max-Age=0/);
   const badLogin = await send(prefix + "/browser/session", { method: "POST", body: { username: "web-owner", password: "wrong-password-value" } });

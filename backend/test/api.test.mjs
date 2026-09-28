@@ -310,6 +310,20 @@ test("JSON and name validation reject malformed or oversized requests", async ()
   assert.equal((await api("/v1/me", { token: owner.token })).status, 200);
 });
 
+test("only the owner can set one canonical RELAY filename", async () => {
+  const { owner, member, shared } = await pair();
+  const path = `/v1/worlds/${shared.id}/relay-file`;
+  assert.equal((await api(path, { method: "POST", token: member.token, body: { fileName: "Wrong RELAY.zip" } })).status, 403);
+  for (const fileName of ["save.zip", "../save RELAY.zip", "bad/name RELAY.zip", " RELAY.zip"]) {
+    assert.equal((await api(path, { method: "POST", token: owner.token, body: { fileName } })).status, 400);
+  }
+  const configured = await api(path, { method: "POST", token: owner.token, body: { fileName: "PYANODON 2.1 RELAY.zip" } });
+  assert.equal(configured.status, 200);
+  assert.equal(configured.body.world.relayFileName, "PYANODON 2.1 RELAY.zip");
+  assert.equal((await api(path, { method: "POST", token: owner.token, body: { fileName: "Other RELAY.zip" } })).status, 409);
+  assert.equal((await api(`/v1/worlds/${shared.id}`, { token: member.token })).body.world.relayFileName, "PYANODON 2.1 RELAY.zip");
+});
+
 test("tokens and invitation secrets never appear in world responses or raw DB fields", async () => {
   const owner = await register();
   const shared = await world(owner);

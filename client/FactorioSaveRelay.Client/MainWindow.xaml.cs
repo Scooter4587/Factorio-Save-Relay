@@ -1,7 +1,8 @@
+using System.ComponentModel;
 using System.IO;
 using System.Net.Http;
+using System.Text.Json;
 using System.Windows;
-using System.Windows.Controls;
 using System.Windows.Threading;
 using Microsoft.Win32;
 
@@ -9,38 +10,46 @@ namespace FactorioSaveRelay.Client;
 
 public partial class MainWindow : Window
 {
-    private sealed record WorldChoice(string Id, string Name, string Role, long Revision)
-    {
-        public override string ToString() => $"{Name} — revision {Revision} ({Role})";
-    }
-    private sealed record HistoryChoice(long Revision, string Status)
-    {
-        public override string ToString() => $"Revision {Revision} — {Status}";
-    }
+    private const string ServiceAddress = "https://factorio-save-relay-test.aisoft-sk.workers.dev/";
+
+    private sealed record RelayWorld(string Id, string Name, string Role, long Revision,
+        string? RelayFileName, string? HostDeviceId, string? HostDisplayName);
 
     private RelayApi? _api;
+    private RelayWorld? _world;
+    private string? _deviceId;
+    private string? _profile;
     private string? _leaseToken;
+    private string? _cloudHash;
+    private string? _hostStartHash;
     private PendingDownload? _pending;
+    private FileSystemWatcher? _saveWatcher;
+    private (long Size, DateTime Modified, string Hash)? _localFingerprint;
+    private bool _factorioSeen;
+    private bool _autoUploadPending;
+    private bool _busy;
+    private DateTime _nextAutoAttempt;
     private readonly DispatcherTimer _heartbeat = new() { Interval = TimeSpan.FromSeconds(60) };
     private readonly DispatcherTimer _savePoll = new() { Interval = TimeSpan.FromSeconds(5) };
-    private FileSystemWatcher? _saveWatcher;
-    private (long Size, DateTime Modified)? _observedSave;
-    private volatile bool _autoUploadPending;
-    private DateTime _nextAutoAttempt;
-    private bool _busy;
+    private readonly DispatcherTimer _statePoll = new() { Interval = TimeSpan.FromSeconds(15) };
 
     public MainWindow()
     {
         InitializeComponent();
         _heartbeat.Tick += HeartbeatTick;
         _savePoll.Tick += SavePollTick;
+        _statePoll.Tick += StatePollTick;
+        SetupButton.Visibility = Visibility.Collapsed;
+        SyncButton.Visibility = Visibility.Collapsed;
+        TakeOverButton.Visibility = Visibility.Collapsed;
+        ReleaseButton.Visibility = Visibility.Collapsed;
     }
 
-    private RelayApi Api => _api ?? throw new InvalidOperationException("Register or load a local profile first.");
-    private WorldChoice World => WorldCombo.SelectedItem as WorldChoice
-        ?? throw new InvalidOperationException("Choose a shared world first.");
-    private string Lease => _leaseToken ?? throw new InvalidOperationException("Acquire the host lease first.");
-    private string SavePath => SafeSaveFiles.CheckTestPath(SavePathBox.Text.Trim());
+    private RelayApi Api => _api ?? throw new InvalidOperationException("Najprv sa prihlás.");
+    private RelayWorld World => _world ?? throw new InvalidOperationException("Najprv vytvor alebo prijmi svet na webe.");
+    private string Lease => _leaseToken ?? throw new InvalidOperationException("Tento PC momentálne nehostuje.");
+    private string RelayPath => SafeSaveFiles.RelayPath(World.RelayFileName
+        ?? throw new InvalidOperationException("Relay save ešte nie je nastavený."));
     private static string Root(string worldId) => $"/v1/worlds/{worldId}";
 
     private async Task Run(Func<Task> action)
@@ -50,195 +59,243 @@ public partial class MainWindow : Window
         RootGrid.IsEnabled = false;
         try { await action(); }
         catch (Exception error) { StatusText.Text = error.Message; }
-        finally
-        {
-            RootGrid.IsEnabled = true; _busy = false;
-            WorldCombo.IsEnabled = _leaseToken is null;
-            SavePathBox.IsEnabled = _leaseToken is null;
-        }
+        finally { RootGrid.IsEnabled = true; _busy = false; }
     }
-
-    private async void RegisterClick(object sender, RoutedEventArgs e) => await Run(async () =>
-    {
-        if (_leaseToken is not null) throw new InvalidOperationException("Release the current host lease before switching profiles.");
-        var address = ServiceUrlBox.Text.Trim();
-        var profile = ProfileBox.Text.Trim();
-        if (profile.Length is < 1 or > 80) throw new InvalidOperationException("Profile name must be 1–80 characters.");
-        if (CredentialStore.Load(address, profile) is not null)
-            throw new InvalidOperationException("This profile already has a saved credential. Load it instead.");
-        using var registration = new RelayApi(address, "", RegistrationKeyBox.Password);
-        var result = await registration.JsonAsync(HttpMethod.Post, "/v1/devices/register",
-            new { displayName = profile, deviceName = DeviceNameBox.Text.Trim() });
-        var token = result.GetProperty("token").GetString()!;
-        CredentialStore.Save(address, profile, token);
-        RegistrationKeyBox.Clear();
-        _api?.Dispose();
-        _api = new RelayApi(address, token);
-        WorldCombo.Items.Clear(); HistoryCombo.Items.Clear(); _pending = null;
-        await RefreshWorldsAsync();
-        StatusText.Text = $"Profile {profile} registered. Its credential is in Windows Credential Manager.";
-    });
 
     private async void AccountLoginClick(object sender, RoutedEventArgs e) => await Run(async () =>
     {
-        if (_leaseToken is not null) throw new InvalidOperationException("Release the current host lease before switching accounts.");
-        var address = ServiceUrlBox.Text.Trim();
         var username = ProfileBox.Text.Trim();
         var password = AccountPasswordBox.Password;
         AccountPasswordBox.Clear();
-        if (password.Length == 0) throw new InvalidOperationException("Enter your account password.");
-        if (CredentialStore.Load(address, username) is not null)
-            throw new InvalidOperationException("This account is already saved on this PC. Load the saved sign-in instead.");
-        using var login = new RelayApi(address, "");
+        if (username.Length == 0 || password.Length == 0)
+            throw new InvalidOperationException("Zadaj meno účtu a heslo z webu.");
+        using var login = new RelayApi(ServiceAddress, "");
         var result = await login.JsonAsync(HttpMethod.Post, "/v1/accounts/login",
-            new { username, password, deviceName = DeviceNameBox.Text.Trim() });
+            new { username, password, deviceName = Environment.MachineName });
         var token = result.GetProperty("token").GetString()!;
-        CredentialStore.Save(address, username, token);
-        _api?.Dispose();
-        _api = new RelayApi(address, token);
-        WorldCombo.Items.Clear(); HistoryCombo.Items.Clear(); _pending = null;
-        await RefreshWorldsAsync();
-        StatusText.Text = $"Signed in as {username}. This PC's credential is stored in Windows Credential Manager.";
+        CredentialStore.Save(ServiceAddress, username, token);
+        await ConnectAsync(username, token);
     });
 
     private async void LoadProfileClick(object sender, RoutedEventArgs e) => await Run(async () =>
     {
-        if (_leaseToken is not null) throw new InvalidOperationException("Release the current host lease before switching profiles.");
-        var address = ServiceUrlBox.Text.Trim();
-        var profile = ProfileBox.Text.Trim();
-        var token = CredentialStore.Load(address, profile)
-            ?? throw new InvalidOperationException("No saved credential for this service and profile.");
-        var next = new RelayApi(address, token);
-        try { await next.JsonAsync(HttpMethod.Get, "/v1/me"); }
-        catch { next.Dispose(); throw; }
-        _api?.Dispose(); _api = next; _pending = null;
-        await RefreshWorldsAsync();
-        StatusText.Text = $"Profile {profile} loaded.";
+        var username = ProfileBox.Text.Trim();
+        var token = CredentialStore.Load(ServiceAddress, username)
+            ?? throw new InvalidOperationException("Pre tento účet nie je v počítači uložené prihlásenie.");
+        await ConnectAsync(username, token);
     });
 
-    private async Task RefreshWorldsAsync(string? selectId = null)
+    private async Task ConnectAsync(string username, string token)
     {
-        selectId ??= (WorldCombo.SelectedItem as WorldChoice)?.Id;
-        var result = await Api.JsonAsync(HttpMethod.Get, "/v1/worlds");
-        WorldCombo.Items.Clear();
-        foreach (var item in result.GetProperty("worlds").EnumerateArray())
-        {
-            var choice = new WorldChoice(item.GetProperty("id").GetString()!, item.GetProperty("name").GetString()!,
-                item.GetProperty("role").GetString()!, item.GetProperty("currentRevision").GetInt64());
-            WorldCombo.Items.Add(choice);
-            if (choice.Id == selectId) WorldCombo.SelectedItem = choice;
-        }
-        if (WorldCombo.SelectedItem is null && WorldCombo.Items.Count > 0) WorldCombo.SelectedIndex = 0;
-        if (WorldCombo.SelectedItem is not null) await RefreshHistoryAsync();
-    }
-
-    private async void CreateWorldClick(object sender, RoutedEventArgs e) => await Run(async () =>
-    {
-        var created = await Api.JsonAsync(HttpMethod.Post, "/v1/worlds", new { name = WorldNameBox.Text.Trim() });
-        await RefreshWorldsAsync(created.GetProperty("world").GetProperty("id").GetString());
-        StatusText.Text = "World created. Create an invitation for the second profile.";
-    });
-
-    private async void RefreshWorldsClick(object sender, RoutedEventArgs e) => await Run(async () =>
-    {
-        await RefreshWorldsAsync(); StatusText.Text = "World list refreshed.";
-    });
-
-    private async void WorldSelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (_busy || _api is null || WorldCombo.SelectedItem is null) return;
-        await Run(RefreshHistoryAsync);
-    }
-
-    private async void CreateInviteClick(object sender, RoutedEventArgs e) => await Run(async () =>
-    {
-        var result = await Api.JsonAsync(HttpMethod.Post, Root(World.Id) + "/invites");
-        InviteBox.Text = result.GetProperty("invite").GetProperty("code").GetString();
-        StatusText.Text = "Invitation created. Copy the code into the second profile; it expires in 24 hours.";
-    });
-
-    private async void JoinWorldClick(object sender, RoutedEventArgs e) => await Run(async () =>
-    {
-        var result = await Api.JsonAsync(HttpMethod.Post, "/v1/invites/redeem", new { code = InviteBox.Text.Trim() });
-        await RefreshWorldsAsync(result.GetProperty("world").GetProperty("id").GetString());
-        InviteBox.Clear(); StatusText.Text = "Joined the shared world.";
-    });
-
-    private void ChooseSaveClick(object sender, RoutedEventArgs e)
-    {
+        var next = new RelayApi(ServiceAddress, token);
         try
         {
-            if (_leaseToken is not null) throw new InvalidOperationException("Release the host lease before changing the selected ZIP.");
-            var dialog = new SaveFileDialog { Title = "Select an existing test ZIP or a target for a downloaded copy",
-                Filter = "ZIP save (*.zip)|*.zip", DefaultExt = ".zip", AddExtension = true,
-                OverwritePrompt = false, FileName = "RelayTestCopy.zip" };
-            if (dialog.ShowDialog(this) == true)
-            {
-                SavePathBox.Text = SafeSaveFiles.CheckTestPath(dialog.FileName);
-                StatusText.Text = "Test ZIP path selected. The source file will be backed up before replacement.";
-            }
+            var me = await next.JsonAsync(HttpMethod.Get, "/v1/me");
+            _deviceId = me.GetProperty("identity").GetProperty("deviceId").GetString();
         }
-        catch (Exception error) { StatusText.Text = error.Message; }
+        catch { next.Dispose(); throw; }
+        _api?.Dispose();
+        _api = next;
+        _profile = username;
+        _pending = null;
+        LoginPanel.Visibility = Visibility.Collapsed;
+        DashboardPanel.Visibility = Visibility.Visible;
+        AccountText.Text = $"Účet {username} · {Environment.MachineName}";
+        _statePoll.Start();
+        await RefreshStateAsync();
+        StatusText.Text = "Prihlásenie je uložené bezpečne v tomto Windows účte.";
     }
+
+    private async Task RefreshStateAsync()
+    {
+        var listed = await Api.JsonAsync(HttpMethod.Get, "/v1/worlds");
+        var worlds = listed.GetProperty("worlds").EnumerateArray().ToArray();
+        if (worlds.Length == 0)
+        {
+            _world = null;
+            WorldNameText.Text = "Žiadny spoločný svet";
+            StateText.Text = "Dokonči vytvorenie alebo párovanie na webe";
+            RelayFileText.Text = "—"; CloudRevisionText.Text = "—"; LocalRevisionText.Text = "—";
+            HostText.Text = "Hostiteľ: —";
+            HideActions();
+            return;
+        }
+        if (worlds.Length > 1) throw new InvalidOperationException("Tento testovací klient očakáva jeden spoločný svet.");
+        var id = worlds[0].GetProperty("id").GetString()!;
+        var detail = (await Api.JsonAsync(HttpMethod.Get, Root(id))).GetProperty("world");
+        _world = ParseWorld(detail);
+        WorldNameText.Text = _world.Name;
+        CloudRevisionText.Text = _world.Revision == 0 ? "Bez save" : $"Revízia #{_world.Revision}";
+        RelayFileText.Text = _world.RelayFileName ?? "Zatiaľ nenastavený";
+        HostText.Text = _world.HostDeviceId is null ? "Hostiteľ: nikto"
+            : _world.HostDeviceId == _deviceId ? "Hostiteľ: tento PC"
+            : $"Hostiteľ: {_world.HostDisplayName ?? "druhý hráč"}";
+        _cloudHash = null;
+        if (_world.Revision > 0)
+        {
+            var history = await Api.JsonAsync(HttpMethod.Get, Root(id) + "/revisions");
+            var current = history.GetProperty("revisions").EnumerateArray()
+                .First(r => r.GetProperty("status").GetString() == "current");
+            _cloudHash = current.GetProperty("sha256").GetString();
+        }
+        await RenderStateAsync();
+    }
+
+    private static RelayWorld ParseWorld(JsonElement item) => new(
+        item.GetProperty("id").GetString()!, item.GetProperty("name").GetString()!,
+        item.GetProperty("role").GetString()!, item.GetProperty("currentRevision").GetInt64(),
+        item.TryGetProperty("relayFileName", out var file) && file.ValueKind != JsonValueKind.Null ? file.GetString() : null,
+        item.TryGetProperty("hostDeviceId", out var host) && host.ValueKind != JsonValueKind.Null ? host.GetString() : null,
+        item.TryGetProperty("hostDisplayName", out var name) && name.ValueKind != JsonValueKind.Null ? name.GetString() : null);
+
+    private async Task RenderStateAsync()
+    {
+        HideActions();
+        if (_world is null) return;
+        if (_world.RelayFileName is null)
+        {
+            StateText.Text = _world.Role == "owner" ? "Pripravené na prvotné nastavenie" : "Čaká sa na nastavenie vlastníkom";
+            LocalRevisionText.Text = "Nenastavené";
+            SetupButton.Visibility = _world.Role == "owner" ? Visibility.Visible : Visibility.Collapsed;
+            return;
+        }
+        var path = RelayPath;
+        if (!File.Exists(path))
+        {
+            LocalRevisionText.Text = "Save chýba";
+            StateText.Text = _world.Revision > 0 ? "Treba stiahnuť relay save" : "Vlastník musí založiť prvý save";
+            SyncButton.Visibility = _world.Revision > 0 ? Visibility.Visible : Visibility.Collapsed;
+            return;
+        }
+        var localHash = await LocalHashAsync(path);
+        var synced = _world.Revision > 0 && string.Equals(localHash, _cloudHash, StringComparison.OrdinalIgnoreCase);
+        LocalRevisionText.Text = synced ? $"Revízia #{_world.Revision}" : "Lokálne zmeny";
+        if (_leaseToken is not null)
+        {
+            StateText.Text = SafeSaveFiles.FactorioRunning() ? "HOSTUJEŠ · Factorio beží" : "HOSTUJEŠ · čakám na hranie alebo odovzdanie";
+            ReleaseButton.Visibility = Visibility.Visible;
+            return;
+        }
+        if (_world.HostDeviceId is not null)
+        {
+            StateText.Text = _world.HostDeviceId == _deviceId ? "Obnovujem tvoje hostovanie" : $"{_world.HostDisplayName ?? "Druhý hráč"} práve hostuje";
+            return;
+        }
+        if (!synced)
+        {
+            StateText.Text = _world.Revision > 0 ? "Cloud a tento PC sa nezhodujú" : "Pripravené nahrať prvú verziu";
+            SyncButton.Visibility = _world.Revision > 0 ? Visibility.Visible : Visibility.Collapsed;
+            if (_world.Revision == 0 && _world.Role == "owner") TakeOverButton.Visibility = Visibility.Visible;
+            return;
+        }
+        StateText.Text = "SYNCHRONIZOVANÉ · môžeš prevziať hostovanie";
+        TakeOverButton.Visibility = Visibility.Visible;
+    }
+
+    private void HideActions()
+    {
+        SetupButton.Visibility = Visibility.Collapsed;
+        SyncButton.Visibility = Visibility.Collapsed;
+        TakeOverButton.Visibility = Visibility.Collapsed;
+        ReleaseButton.Visibility = Visibility.Collapsed;
+    }
+
+    private async Task<string> LocalHashAsync(string path)
+    {
+        var info = new FileInfo(path);
+        if (_localFingerprint is { } cached && cached.Size == info.Length && cached.Modified == info.LastWriteTimeUtc)
+            return cached.Hash;
+        var hash = await SafeSaveFiles.Sha256Async(path);
+        _localFingerprint = (info.Length, info.LastWriteTimeUtc, hash);
+        return hash;
+    }
+
+    private async void SetupClick(object sender, RoutedEventArgs e) => await Run(async () =>
+    {
+        if (World.Role != "owner") throw new InvalidOperationException("Prvotný relay save nastavuje vlastník sveta.");
+        if (SafeSaveFiles.FactorioRunning()) throw new InvalidOperationException("Najprv zavri Factorio.");
+        var dialog = new OpenFileDialog { Title = "Vyber pôvodný Factorio save", Filter = "Factorio save (*.zip)|*.zip", CheckFileExists = true };
+        if (dialog.ShowDialog(this) != true) return;
+        var created = await SafeSaveFiles.CreateRelayCopyAsync(dialog.FileName);
+        await Api.JsonAsync(HttpMethod.Post, Root(World.Id) + "/relay-file", new { fileName = Path.GetFileName(created) });
+        _localFingerprint = null;
+        await RefreshStateAsync();
+        if (World.Revision == 0)
+        {
+            await AcquireAsync();
+            try
+            {
+                if (!await UploadSelectedAsync(freshlyCreated: true))
+                    throw new InvalidOperationException("Prvú relay kópiu sa nepodarilo pripraviť na nahratie.");
+                await ReleaseLeaseAsync();
+            }
+            catch
+            {
+                await RenderStateAsync();
+                throw;
+            }
+            await RefreshStateAsync();
+            StatusText.Text = $"Relay save {Path.GetFileName(created)} bol vytvorený a bezpečne nahraný ako prvá verzia.";
+        }
+        else
+        {
+            StatusText.Text = "Relay kópia bola vytvorená. Ak sa nezhoduje s cloudom, použi Synchronizovať.";
+        }
+    });
 
     private async void SyncClick(object sender, RoutedEventArgs e) => await Run(async () =>
     {
-        if (_leaseToken is not null) throw new InvalidOperationException("Release host lease before syncing over this copy.");
-        if (_pending is not null) throw new InvalidOperationException("Apply the pending download before starting another one.");
+        await SyncLatestAsync();
+        await RefreshStateAsync();
+    });
+
+    private async Task SyncLatestAsync()
+    {
+        if (_leaseToken is not null) throw new InvalidOperationException("Počas hostovania nemožno prepísať lokálny save.");
+        if (SafeSaveFiles.FactorioRunning()) throw new InvalidOperationException("Najprv zavri Factorio.");
+        if (World.Revision < 1) throw new InvalidOperationException("V cloude ešte nie je žiadny save.");
+        StatusText.Text = "Sťahujem a overujem aktuálny save…";
         using var response = await Api.OpenDownloadAsync(Root(World.Id) + "/download");
-        _pending = await SafeSaveFiles.StageAsync(response, SavePath);
-        if (SafeSaveFiles.FactorioRunning())
-        {
-            StatusText.Text = "Download verified and staged. Close Factorio, then click Apply pending download.";
-            return;
-        }
+        _pending = await SafeSaveFiles.StageAsync(response, RelayPath);
         var backup = await SafeSaveFiles.ApplyAsync(_pending);
         var revision = _pending.Revision;
         _pending = null;
-        await RefreshWorldsAsync();
-        StatusText.Text = backup is null ? $"Revision {revision} installed as a new test copy."
-            : $"Revision {revision} installed. Previous test copy backed up at {backup}";
+        _localFingerprint = null;
+        StatusText.Text = backup is null ? $"Revízia #{revision} je pripravená vo Factoriu."
+            : $"Revízia #{revision} je pripravená; predchádzajúca relay kópia je v lokálnej zálohe.";
+    }
+
+    private async void TakeOverClick(object sender, RoutedEventArgs e) => await Run(async () =>
+    {
+        await RefreshStateAsync();
+        if (World.HostDeviceId is not null) throw new InvalidOperationException("Svet momentálne drží druhý hostiteľ.");
+        if (!File.Exists(RelayPath)) throw new InvalidOperationException("Najprv synchronizuj relay save.");
+        var localHash = await LocalHashAsync(RelayPath);
+        if (World.Revision > 0 && !string.Equals(localHash, _cloudHash, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Lokálny save sa nezhoduje s cloudom. Najprv ho synchronizuj.");
+        await AcquireAsync();
+        StatusText.Text = $"Hostovanie je tvoje. Vo Factoriu otvor presne {World.RelayFileName}.";
+        await RenderStateAsync();
     });
 
-    private async void ApplyPendingClick(object sender, RoutedEventArgs e) => await Run(async () =>
+    private async Task AcquireAsync()
     {
-        var pending = _pending ?? throw new InvalidOperationException("There is no pending download.");
-        var backup = await SafeSaveFiles.ApplyAsync(pending);
-        _pending = null;
-        StatusText.Text = backup is null ? "Verified download installed as a new test copy."
-            : $"Verified download installed. Previous test copy backed up at {backup}";
-    });
-
-    private async void HostClick(object sender, RoutedEventArgs e) => await Run(async () =>
-    {
-        if (_leaseToken is not null) throw new InvalidOperationException("This profile already holds a host lease.");
-        var file = SavePath;
-        if (!File.Exists(file)) throw new InvalidOperationException("Choose an existing test ZIP before acquiring host lease.");
-        await SafeSaveFiles.ValidateZipAsync(file);
-        var world = (await Api.JsonAsync(HttpMethod.Get, Root(World.Id))).GetProperty("world");
-        var revision = world.GetProperty("currentRevision").GetInt64();
-        if (revision > 0)
-        {
-            var history = await Api.JsonAsync(HttpMethod.Get, Root(World.Id) + "/revisions");
-            var current = history.GetProperty("revisions").EnumerateArray().First(r => r.GetProperty("status").GetString() == "current");
-            if (await SafeSaveFiles.Sha256Async(file) != current.GetProperty("sha256").GetString())
-                throw new InvalidOperationException("This copy differs from the current cloud revision. Sync it before hosting.");
-        }
-        var acquired = await Api.JsonAsync(HttpMethod.Post, Root(World.Id) + "/lock/acquire", new { expectedRevision = revision });
+        var acquired = await Api.JsonAsync(HttpMethod.Post, Root(World.Id) + "/lock/acquire", new { expectedRevision = World.Revision });
         _leaseToken = acquired.GetProperty("lease").GetProperty("token").GetString();
+        _hostStartHash = File.Exists(RelayPath) ? await LocalHashAsync(RelayPath) : null;
+        _factorioSeen = false;
         _heartbeat.Start();
-        StartMonitoring(file);
-        WorldCombo.IsEnabled = false;
-        StatusText.Text = "Host lease acquired. Stable changes to this test ZIP are uploaded automatically; the lease renews every minute.";
-    });
+        StartMonitoring(RelayPath);
+    }
 
     private void StartMonitoring(string file)
     {
         StopMonitoring();
-        _observedSave = null;
-        _autoUploadPending = true;
+        var info = new FileInfo(file);
+        _localFingerprint = null;
+        _autoUploadPending = false;
         _nextAutoAttempt = DateTime.UtcNow;
-        _saveWatcher = new FileSystemWatcher(Path.GetDirectoryName(file)!, Path.GetFileName(file))
+        _saveWatcher = new FileSystemWatcher(info.DirectoryName!, info.Name)
         {
             NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.FileName | NotifyFilters.CreationTime,
             EnableRaisingEvents = true,
@@ -261,70 +318,42 @@ public partial class MainWindow : Window
     private async void SavePollTick(object? sender, EventArgs e)
     {
         if (_leaseToken is null || _busy) return;
-        try
+        if (SafeSaveFiles.FactorioRunning())
         {
-            var file = new FileInfo(SavePath);
-            if (file.Exists)
-            {
-                var observed = (file.Length, file.LastWriteTimeUtc);
-                if (_observedSave != observed) { _observedSave = observed; _autoUploadPending = true; }
-            }
-            if (!_autoUploadPending || DateTime.UtcNow < _nextAutoAttempt) return;
-            _nextAutoAttempt = DateTime.UtcNow.AddSeconds(15);
-            await Run(async () => { if (await UploadSelectedAsync()) _autoUploadPending = false; });
+            _factorioSeen = true;
+            StateText.Text = "HOSTUJEŠ · Factorio beží · save nemením";
+            return;
         }
-        catch (Exception error) { StatusText.Text = error.Message; }
+        if (!_autoUploadPending || DateTime.UtcNow < _nextAutoAttempt) return;
+        _nextAutoAttempt = DateTime.UtcNow.AddSeconds(15);
+        await Run(async () =>
+        {
+            StatusText.Text = "Overujem nové uloženie…";
+            if (await UploadSelectedAsync()) _autoUploadPending = false;
+            await RefreshStateAsync();
+        });
     }
 
-    private async void HeartbeatTick(object? sender, EventArgs e)
+    private async Task<bool> UploadSelectedAsync(bool freshlyCreated = false)
     {
-        if (_leaseToken is null || _api is null || WorldCombo.SelectedItem is not WorldChoice world) return;
-        try { await _api.JsonAsync(HttpMethod.Post, Root(world.Id) + "/lock/renew", new { lockToken = _leaseToken }); }
-        catch
-        {
-            _leaseToken = null; _heartbeat.Stop(); StopMonitoring(); WorldCombo.IsEnabled = true; SavePathBox.IsEnabled = true;
-            StatusText.Text = "Host lease was lost. Stop editing; refresh and sync before hosting again.";
-        }
-    }
-
-    private async void UploadClick(object sender, RoutedEventArgs e) => await Run(async () =>
-    {
-        if (!await UploadSelectedAsync()) throw new InvalidOperationException("The ZIP is still changing. Wait a few seconds and retry.");
-        _autoUploadPending = false;
-    });
-
-    private async Task<bool> UploadSelectedAsync()
-    {
-        var lease = Lease;
-        var file = SavePath;
-        if (!File.Exists(file)) throw new InvalidOperationException("The selected test ZIP does not exist.");
-        var snapshot = await SafeSaveFiles.SnapshotStableAsync(file);
+        var snapshot = freshlyCreated
+            ? await SafeSaveFiles.SnapshotVerifiedAsync(RelayPath)
+            : await SafeSaveFiles.SnapshotStableAsync(RelayPath);
         if (snapshot is null) return false;
         try
         {
-            var size = new FileInfo(snapshot).Length;
             var sha = await SafeSaveFiles.Sha256Async(snapshot);
-            var world = (await Api.JsonAsync(HttpMethod.Get, Root(World.Id))).GetProperty("world");
-            var baseRevision = world.GetProperty("currentRevision").GetInt64();
-            if (baseRevision > 0)
-            {
-                var history = await Api.JsonAsync(HttpMethod.Get, Root(World.Id) + "/revisions");
-                var current = history.GetProperty("revisions").EnumerateArray()
-                    .First(r => r.GetProperty("status").GetString() == "current");
-                if (sha == current.GetProperty("sha256").GetString())
-                {
-                    StatusText.Text = "The selected ZIP is unchanged. No new revision was created.";
-                    return true;
-                }
-            }
+            if (_cloudHash is not null && string.Equals(sha, _cloudHash, StringComparison.OrdinalIgnoreCase)) return true;
+            StatusText.Text = "Nahrávam nové uloženie…";
             var begin = await Api.JsonAsync(HttpMethod.Post, Root(World.Id) + "/uploads/begin",
-                new { baseRevision, lockToken = lease, sha256 = sha, fileSize = size });
+                new { baseRevision = World.Revision, lockToken = Lease, sha256 = sha, fileSize = new FileInfo(snapshot).Length });
             var upload = begin.GetProperty("upload");
-            await Api.PutZipAsync(upload.GetProperty("contentPath").GetString()!, lease, snapshot);
+            await Api.PutZipAsync(upload.GetProperty("contentPath").GetString()!, Lease, snapshot);
             var finalized = await Api.JsonAsync(HttpMethod.Post, Root(World.Id) + "/uploads/finalize",
-                new { uploadId = upload.GetProperty("id").GetString(), lockToken = lease });
-            await RefreshWorldsAsync();
-            StatusText.Text = $"ZIP uploaded as revision {finalized.GetProperty("revision").GetProperty("revision").GetInt64()}.";
+                new { uploadId = upload.GetProperty("id").GetString(), lockToken = Lease });
+            _cloudHash = sha;
+            _world = World with { Revision = finalized.GetProperty("revision").GetProperty("revision").GetInt64() };
+            StatusText.Text = $"Nové uloženie je v cloude ako revízia #{World.Revision}.";
             return true;
         }
         finally { if (File.Exists(snapshot)) File.Delete(snapshot); }
@@ -332,48 +361,74 @@ public partial class MainWindow : Window
 
     private async void ReleaseClick(object sender, RoutedEventArgs e) => await Run(async () =>
     {
-        var lease = Lease;
-        if (SafeSaveFiles.FactorioRunning())
-            throw new InvalidOperationException("Close Factorio before releasing host lease, so the final save can be uploaded.");
-        if (!await UploadSelectedAsync())
-            throw new InvalidOperationException("The ZIP is still changing. Wait for the final save to finish before releasing.");
-        await Api.JsonAsync(HttpMethod.Post, Root(World.Id) + "/lock/release", new { lockToken = lease });
-        _leaseToken = null; _heartbeat.Stop(); StopMonitoring(); WorldCombo.IsEnabled = true;
-        StatusText.Text = "Host lease released. The other profile can now sync and host.";
+        if (SafeSaveFiles.FactorioRunning()) throw new InvalidOperationException("Najprv ulož svet a zavri Factorio.");
+        var currentHash = await LocalHashAsync(RelayPath);
+        if (_factorioSeen && string.Equals(currentHash, _hostStartHash, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Factorio bežalo, ale relay save sa nezmenil. Ulož svet pred odovzdaním.");
+        if (!await UploadSelectedAsync()) throw new InvalidOperationException("Save sa ešte mení. Počkaj niekoľko sekúnd.");
+        await ReleaseLeaseAsync();
+        await RefreshStateAsync();
+        StatusText.Text = "Save je overený, nahraný a hostovanie bolo odovzdané.";
     });
 
-    private async Task RefreshHistoryAsync()
+    private async Task ReleaseLeaseAsync()
     {
-        var result = await Api.JsonAsync(HttpMethod.Get, Root(World.Id) + "/revisions");
-        HistoryCombo.Items.Clear();
-        foreach (var item in result.GetProperty("revisions").EnumerateArray())
-            HistoryCombo.Items.Add(new HistoryChoice(item.GetProperty("revision").GetInt64(), item.GetProperty("status").GetString()!));
-        if (HistoryCombo.Items.Count > 0) HistoryCombo.SelectedIndex = 0;
+        await Api.JsonAsync(HttpMethod.Post, Root(World.Id) + "/lock/release", new { lockToken = Lease });
+        _leaseToken = null;
+        _heartbeat.Stop();
+        StopMonitoring();
+        _hostStartHash = null;
+        _factorioSeen = false;
     }
 
-    private async void RefreshHistoryClick(object sender, RoutedEventArgs e) => await Run(async () =>
+    private async void HeartbeatTick(object? sender, EventArgs e)
     {
-        await RefreshHistoryAsync(); StatusText.Text = "Revision history refreshed.";
+        if (_leaseToken is null || _api is null || _world is null) return;
+        try { await _api.JsonAsync(HttpMethod.Post, Root(_world.Id) + "/lock/renew", new { lockToken = _leaseToken }); }
+        catch
+        {
+            _leaseToken = null; _heartbeat.Stop(); StopMonitoring();
+            StatusText.Text = "Hostovanie sa stratilo. Nehraj ďalej; obnov stav a najprv synchronizuj.";
+            await Run(RefreshStateAsync);
+        }
+    }
+
+    private async void StatePollTick(object? sender, EventArgs e)
+    {
+        if (_api is null || _busy || _leaseToken is not null) return;
+        await Run(RefreshStateAsync);
+    }
+
+    private async void RefreshClick(object sender, RoutedEventArgs e) => await Run(async () =>
+    {
+        await RefreshStateAsync();
+        StatusText.Text = "Stav je aktuálny.";
     });
 
-    private async void RestoreClick(object sender, RoutedEventArgs e) => await Run(async () =>
+    private void SignOutClick(object sender, RoutedEventArgs e)
     {
-        var lease = Lease;
-        if (World.Role != "owner") throw new InvalidOperationException("Only the world owner can restore a revision.");
-        if (HistoryCombo.SelectedItem is not HistoryChoice selected || selected.Status is not ("archived" or "current"))
-            throw new InvalidOperationException("Choose a retained finalized revision to restore.");
-        var world = (await Api.JsonAsync(HttpMethod.Get, Root(World.Id))).GetProperty("world");
-        var result = await Api.JsonAsync(HttpMethod.Post, Root(World.Id) + $"/revisions/{selected.Revision}/restore",
-            new { expectedRevision = world.GetProperty("currentRevision").GetInt64(), lockToken = lease });
-        await RefreshWorldsAsync();
-        StatusText.Text = $"Revision {selected.Revision} copied into new revision {result.GetProperty("revision").GetProperty("revision").GetInt64()}. Release the lease, then sync your test copy before hosting again.";
-    });
+        if (_leaseToken is not null) { StatusText.Text = "Najprv odovzdaj hostovanie."; return; }
+        if (_profile is not null) CredentialStore.Delete(ServiceAddress, _profile);
+        _statePoll.Stop(); _api?.Dispose(); _api = null; _world = null; _deviceId = null; _profile = null;
+        DashboardPanel.Visibility = Visibility.Collapsed; LoginPanel.Visibility = Visibility.Visible;
+        StatusText.Text = "Tento PC bol odpojený. Účet a svet na webe zostali zachované.";
+    }
+
+    protected override void OnClosing(CancelEventArgs e)
+    {
+        if (_leaseToken is not null)
+        {
+            MessageBox.Show("Najprv ulož svet, zavri Factorio a použi Uložiť a odovzdať.",
+                "Hostovanie je stále aktívne", MessageBoxButton.OK, MessageBoxImage.Warning);
+            e.Cancel = true;
+            return;
+        }
+        base.OnClosing(e);
+    }
 
     protected override void OnClosed(EventArgs e)
     {
-        _heartbeat.Stop();
-        StopMonitoring();
-        _api?.Dispose();
+        _heartbeat.Stop(); _statePoll.Stop(); StopMonitoring(); _api?.Dispose();
         base.OnClosed(e);
     }
 }

@@ -3,12 +3,12 @@
 Self-hosted save synchronization for alternating Factorio multiplayer hosts.
 
 > [!WARNING]
-> This project is an early prototype. Do not use it as the only copy of a valuable
-> save until the restore and failure-recovery paths have been validated.
+> This project is a private pilot. Keep the original Factorio save until the
+> two-computer RELAY workflow has been validated with the real game.
 
 Factorio Save Relay is intended for small multiplayer groups that want to rotate
 the host without manually sending save files after every session. A Windows
-client will coordinate through a Cloudflare-hosted API, store immutable save
+client coordinates through a Cloudflare-hosted API, stores save
 revisions in R2, and keep multiplayer worlds from silently splitting into two
 conflicting histories.
 
@@ -29,7 +29,7 @@ conflicting histories.
 | API | Cloudflare Workers / TypeScript | Authentication, membership, leases and revision coordination |
 | Metadata | Cloudflare D1 | Users, devices, worlds, invites and revision history |
 | Save storage | Cloudflare R2 | Private immutable Factorio save archives |
-| Browser panel | Worker-hosted Web UI | Private account sign-in, pairing, world history and manual ZIP handoff |
+| Browser panel | Worker-hosted Web UI | Account sign-in, pairing, members and emergency manual ZIP handoff |
 
 See [docs/architecture.md](docs/architecture.md) for the initial technical design.
 
@@ -73,16 +73,17 @@ application. From a Windows machine with the .NET 10 SDK:
 dotnet build client/FactorioSaveRelay.Client/FactorioSaveRelay.Client.csproj
 ```
 
-The manual test client works with localhost or a private HTTPS test service and
-only accepts copies outside the real Factorio saves folder. See
-[client/README.md](client/README.md) for startup steps and file-safety limits.
+The app signs in to an account already created and paired on the web. Its first
+setup creates a separate `<original name> RELAY.zip` in the Factorio saves
+folder, while the original stays untouched. See [client/README.md](client/README.md)
+for the exact host handoff and file-safety rules.
 The [remote service guide](backend/remote-test.md) covers the private Worker
 and browser panel at `scooteruniverse.eu/factorio-relay`. It is limited to
 small ZIPs until direct R2 upload is implemented.
 
 Account registration and sign-in are deployed on the private pilot URL. The
-browser panel shows both world members after pairing; it does not indicate
-whether they are currently online.
+Windows download is presented only after browser sign-in; the app itself still
+requires the user's account before it can access a world or save.
 
 ## Project status
 
@@ -102,11 +103,12 @@ whether they are currently online.
 - [x] Local private-pilot account registration, password sign-in and recovery
 - [x] Local web onboarding for creating or joining the shared world
 - [x] Deploy account onboarding to the private test service
-- [ ] Publish a tested Windows app download behind account sign-in
-- [ ] Automatic download and safe integration with the selected real Factorio save
+- [x] Authenticated Windows app download endpoint (local; deployment pending)
+- [x] Copy-based RELAY save naming and verified automatic synchronization (local)
 - [ ] Direct R2 upload and verified download
 - [x] Backend five-revision retention and restore (local)
-- [ ] End-to-end two-device test
+- [ ] Deploy the current Worker migration and Windows build
+- [ ] End-to-end two-device Factorio test
 
 ## Trademark notice
 
