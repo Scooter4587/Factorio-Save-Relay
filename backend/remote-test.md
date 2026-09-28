@@ -19,6 +19,9 @@ as revision #1. The other player should refresh the panel, download that
 revision and verify the ZIP copy before using it. The panel shows world members,
 but it does not indicate who is online. Do not use this manual test as
 automatic synchronization or host the same world simultaneously.
+During upload the panel reports transferred bytes and a percentage. Reaching
+100% means the browser sent the ZIP; the save is available to the other player
+only after the panel confirms the new revision and enables its download.
 
 ## Cost limits for this test service
 

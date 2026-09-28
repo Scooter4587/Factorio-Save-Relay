@@ -1,7 +1,7 @@
 import { ApiError, json, readBody, textField } from "./http";
 import { authenticate, validToken } from "./identity";
 import { loginAccount } from "./accounts";
-import { PAGE, SCRIPT, STYLE } from "./web-assets";
+import { PAGE, SCRIPT, STYLE, UPLOAD_STYLE } from "./web-assets";
 
 const PREFIX = "/factorio-relay";
 const COOKIE = "fsr_browser";
@@ -27,7 +27,7 @@ function sessionCookie(request: Request, token?: string): string {
 }
 
 export function browserAsset(kind: "page" | "script" | "style"): Response {
-  const body = kind === "page" ? PAGE : kind === "script" ? SCRIPT : STYLE;
+  const body = kind === "page" ? PAGE : kind === "script" ? SCRIPT : STYLE + UPLOAD_STYLE;
   const mime = kind === "page" ? "text/html; charset=utf-8" : kind === "script"
     ? "text/javascript; charset=utf-8" : "text/css; charset=utf-8";
   const headers: Record<string, string> = {
