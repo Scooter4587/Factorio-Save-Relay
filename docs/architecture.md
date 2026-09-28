@@ -25,7 +25,8 @@ renews a short lease. A finalized upload is promoted only when its base revision
 still equals the world's current revision.
 
 If that comparison fails, the uploaded object is retained as a conflict and is
-never installed automatically on another device.
+never installed automatically on another device. Conflicts share the same
+five-revision recovery window as archived revisions.
 
 ## Client state machine
 
@@ -46,9 +47,11 @@ place only after the game exits.
 3. Upload the completed ZIP to a private, revision-specific R2 key.
 4. Finalize with size and SHA-256 metadata.
 5. Atomically archive the previous current revision and promote the new one.
-6. Mark revisions outside the five-version retention window for deletion.
+6. Retain the current revision and four newest archived or conflicting revisions.
+7. Mark older recoverable revisions for deletion.
 
-Interrupted uploads remain non-current and are cleaned up later.
+Interrupted uploads remain non-current. A scheduled cleanup permanently removes
+them after their 24-hour upload reservation expires.
 
 ## Restore protocol
 

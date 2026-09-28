@@ -19,7 +19,7 @@
                 <GroupBox Header="1. Service and profile" Foreground="#F2B441" Padding="12" Margin="0,0,0,12">
                     <StackPanel>
                         <TextBlock Text="Service address (HTTPS, or localhost for development)" Foreground="#DDE5ED" />
-                        <TextBox x:Name="ServiceUrlBox" Text="http://127.0.0.1:8787" Margin="0,4,0,10" Padding="6" />
+                        <TextBox x:Name="ServiceUrlBox" Text="https://factorio-save-relay-test.aisoft-sk.workers.dev/" Margin="0,4,0,10" Padding="6" />
                         <TextBlock Text="Account name — create your account on the web first" Foreground="#DDE5ED" />
                         <TextBox x:Name="ProfileBox" Text="Adam" Margin="0,4,0,10" Padding="6" />
                         <TextBlock Text="Device name" Foreground="#DDE5ED" />

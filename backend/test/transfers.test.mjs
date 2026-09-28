@@ -409,6 +409,19 @@ test("independent .NET ZIP with a directory and multiple deflated entries valida
   assert.deepEqual((await download(ctx)).bytes, bytes);
 });
 
+test("scheduled cleanup removes expired unfinished uploads", async () => {
+  const ctx = await setup();
+  const upload = await begin(ctx);
+  await put(ctx, upload);
+  await db.prepare("UPDATE revisions SET upload_expires_at = '2000-01-01T00:00:00.000Z' WHERE id = ?")
+    .bind(upload.id).run();
+  await (await mf.getWorker()).scheduled({ cron: "0 0 * * *" });
+  const row = await db.prepare("SELECT status, object_key FROM revisions WHERE id = ?").bind(upload.id).first();
+  assert.equal(row.status, "deleted");
+  assert.equal(await bucket.head(row.object_key), null);
+  assert.equal(await current(ctx), 0);
+});
+
 test("five finalized revisions are retained; old objects and metadata are safely retired", async () => {
   const ctx = await setup();
   const uploaded = [];
@@ -466,7 +479,7 @@ test("members and stale hosts cannot restore or alter current revision", async (
   assert.equal(await current(ctx), candidate.revision);
 });
 
-test("a retained conflict is never pruned with normal history", async () => {
+test("conflicts share the strict five-revision retention window", async () => {
   const ctx = await setup();
   const conflict = await begin(ctx); await put(ctx, conflict);
   const winner = await begin(ctx); await put(ctx, winner); await finish(ctx, winner);
@@ -478,7 +491,10 @@ test("a retained conflict is never pruned with normal history", async () => {
     baseRevision = candidate.revision;
   }
   const history = (await api(`${ctx.base}/revisions`, ctx.b)).body.revisions;
-  assert.equal(history.filter(r => ["current", "archived"].includes(r.status)).length, 5);
-  assert.equal(history.find(r => r.revision === conflict.revision)?.status, "conflict");
-  assert.deepEqual((await download(ctx, ctx.b, `/revisions/${conflict.revision}/download`)).bytes, testZip());
+  assert.equal(history.length, 5);
+  assert.equal(history.find(r => r.revision === conflict.revision), undefined);
+  assert.equal((await download(ctx, ctx.b, `/revisions/${conflict.revision}/download`)).status, 404);
+  const row = await db.prepare("SELECT status, object_key FROM revisions WHERE id = ?").bind(conflict.id).first();
+  assert.equal(row.status, "deleted");
+  assert.equal(await bucket.head(row.object_key), null);
 });

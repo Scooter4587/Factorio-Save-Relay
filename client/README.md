@@ -4,6 +4,8 @@ This .NET 10 WPF client connects to localhost or an HTTPS test service. For the
 hosted private pilot, create and pair accounts on the web first, then use
 **Sign in on this PC** with the same account name and password. The app stores
 its device credential in Windows Credential Manager, not the password.
+The test build defaults to the private pilot's `workers.dev` API address; the
+custom domain remains the browser interface.
 The legacy local test registration remains for the two-window development demo.
 The client can create/join a shared world, acquire and renew the host
 lease, upload a stable selected ZIP automatically while hosting, download the

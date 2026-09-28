@@ -172,13 +172,13 @@ export async function finalizeUpload(request: Request, db: D1Database, bucket: R
     db.prepare(`UPDATE worlds SET current_revision = (SELECT revision_number FROM revisions WHERE id = ?), updated_at = CURRENT_TIMESTAMP
       WHERE id = ? AND EXISTS (SELECT 1 FROM revisions WHERE id = ? AND status = 'current')
     `).bind(uploadId, worldId, uploadId),
-    // Keep the current revision plus the four most recent archived revisions.
+    // Keep the current revision plus four recoverable archived/conflict revisions.
     // Mark first; physical deletion is retried separately and never targets current.
     db.prepare(`UPDATE revisions SET status = 'pending_delete'
-      WHERE world_id = ? AND status = 'archived'
+      WHERE world_id = ? AND status IN ('archived', 'conflict')
         AND revision_number NOT IN (
-          SELECT revision_number FROM revisions WHERE world_id = ? AND status IN ('current', 'archived')
-          ORDER BY revision_number DESC LIMIT 5
+          SELECT revision_number FROM revisions WHERE world_id = ? AND status IN ('archived', 'conflict')
+          ORDER BY revision_number DESC LIMIT 4
         )
         AND EXISTS (SELECT 1 FROM revisions WHERE id = ? AND status = 'current')
     `).bind(worldId, worldId, uploadId),
@@ -191,7 +191,42 @@ export async function finalizeUpload(request: Request, db: D1Database, bucket: R
   return json({ revision: publicRevision(result) });
 }
 
+async function markCleanupCandidates(db: D1Database, worldId?: string): Promise<void> {
+  const expired = worldId
+    ? db.prepare(`UPDATE revisions SET status = 'pending_delete'
+        WHERE world_id = ? AND status = 'uploading' AND upload_expires_at <= ${NOW}`).bind(worldId)
+    : db.prepare(`UPDATE revisions SET status = 'pending_delete'
+        WHERE status = 'uploading' AND upload_expires_at <= ${NOW}`);
+  const overflow = worldId
+    ? db.prepare(`UPDATE revisions SET status = 'pending_delete'
+        WHERE world_id = ? AND status IN ('archived', 'conflict')
+          AND EXISTS (
+            SELECT 1 FROM revisions current
+            WHERE current.world_id = revisions.world_id AND current.status = 'current'
+          )
+          AND revision_number NOT IN (
+            SELECT kept.revision_number FROM revisions kept
+            WHERE kept.world_id = revisions.world_id AND kept.status IN ('archived', 'conflict')
+            ORDER BY kept.revision_number DESC LIMIT 4
+          )`).bind(worldId)
+    : db.prepare(`UPDATE revisions SET status = 'pending_delete'
+        WHERE status IN ('archived', 'conflict')
+          AND EXISTS (
+            SELECT 1 FROM revisions current
+            WHERE current.world_id = revisions.world_id AND current.status = 'current'
+          )
+          AND revision_number NOT IN (
+            SELECT kept.revision_number FROM revisions kept
+            WHERE kept.world_id = revisions.world_id AND kept.status IN ('archived', 'conflict')
+            ORDER BY kept.revision_number DESC LIMIT 4
+          )`);
+  // Expired reservations and excess history are committed before object deletion.
+  // If R2 is temporarily unavailable, pending_delete makes the next run retry.
+  await db.batch([expired, overflow]);
+}
+
 export async function cleanupRetention(db: D1Database, bucket: R2Bucket, worldId?: string): Promise<number> {
+  await markCleanupCandidates(db, worldId);
   const statement = worldId
     ? db.prepare("SELECT id, object_key FROM revisions WHERE world_id = ? AND status = 'pending_delete' ORDER BY finalized_at LIMIT 100").bind(worldId)
     : db.prepare("SELECT id, object_key FROM revisions WHERE status = 'pending_delete' ORDER BY finalized_at LIMIT 100");

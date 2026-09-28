@@ -89,8 +89,10 @@ registration in the config and redeploy to close enrollment completely.
    exchange ZIP copies. Save each displayed emergency recovery code privately.
    The Windows app signs in to the same account using the `workers.dev` base URL.
 
-The template schedules daily retention cleanup. A failed cleanup stays pending
-for a later run. Existing device tokens continue to work after registration is
+The template schedules daily retention cleanup. It keeps the current save plus
+four recent archived or conflicting revisions and removes unfinished uploads
+after their 24-hour reservation expires. A failed cleanup stays pending for a
+later run. Existing device tokens continue to work after registration is
 disabled. The R2 bucket must remain private.
 
 This intermediary Worker relay is a **temporary small-save test path**. A
