@@ -54,3 +54,48 @@ export function testZip(text = "synthetic relay test", deflate = false, descript
   end.writeUInt32LE(local.length + name.length + payload.length + dataDescriptor.length, 16);
   return Buffer.concat([local, name, payload, dataDescriptor, central, name, end]);
 }
+
+export function multiEntryTestZip(count = 193) {
+  if (!Number.isInteger(count) || count < 1 || count > 2048) throw new RangeError("Invalid entry count");
+  const localParts = [], centralParts = [];
+  let offset = 0, directorySize = 0;
+  for (let index = 0; index < count; index++) {
+    const name = Buffer.from(index === 0
+      ? "test-world/level.dat"
+      : `test-world/locale/en/test-${index}.cfg`);
+    const payload = Buffer.from(`synthetic entry ${index}`);
+    let crc = 0xffffffff;
+    for (const byte of payload) {
+      crc ^= byte;
+      for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0);
+    }
+    crc = (crc ^ 0xffffffff) >>> 0;
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt32LE(crc, 14);
+    local.writeUInt32LE(payload.length, 18);
+    local.writeUInt32LE(payload.length, 22);
+    local.writeUInt16LE(name.length, 26);
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE(20, 4);
+    central.writeUInt16LE(20, 6);
+    central.writeUInt32LE(crc, 16);
+    central.writeUInt32LE(payload.length, 20);
+    central.writeUInt32LE(payload.length, 24);
+    central.writeUInt16LE(name.length, 28);
+    central.writeUInt32LE(offset, 42);
+    localParts.push(local, name, payload);
+    centralParts.push(central, name);
+    offset += local.length + name.length + payload.length;
+    directorySize += central.length + name.length;
+  }
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(count, 8);
+  end.writeUInt16LE(count, 10);
+  end.writeUInt32LE(directorySize, 12);
+  end.writeUInt32LE(offset, 16);
+  return Buffer.concat([...localParts, ...centralParts, end]);
+}
