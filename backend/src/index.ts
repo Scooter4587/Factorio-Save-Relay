@@ -15,10 +15,18 @@ interface Env {
   SAVES?: R2Bucket;
   ALLOW_LOCAL_TRANSFERS?: string;
   PRIVATE_PILOT?: string;
+  PILOT_MAX_USERS?: string;
+  PILOT_MAX_WORLDS?: string;
   ACCOUNT_PEPPER?: string;
 }
 
 const SERVICE_VERSION = "0.1.0";
+
+function pilotLimit(value: string | undefined, fallback: number): number {
+  if (value === undefined) return fallback;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= 1 && parsed <= 100 ? parsed : fallback;
+}
 
 async function registrationAuthorized(request: Request, env: Env): Promise<boolean> {
   if (env.REGISTRATION_KEY) {
@@ -94,7 +102,7 @@ async function handle(request: Request, env: Env): Promise<Response> {
           throw new ApiError(403, "registration_denied", "A valid registration key is required.");
         }
         return env.PRIVATE_PILOT === "true"
-          ? await createAccount(request, env.DB, env.ACCOUNT_PEPPER)
+          ? await createAccount(request, env.DB, env.ACCOUNT_PEPPER, pilotLimit(env.PILOT_MAX_USERS, 2))
           : await register(request, env.DB);
       }
       if (accountLogin) return await loginAccount(request, env.DB, env.ACCOUNT_PEPPER);
@@ -121,7 +129,8 @@ async function handle(request: Request, env: Env): Promise<Response> {
       }
       if (pathname === "/v1/me") return json({ identity });
       if (pathname === "/v1/worlds") {
-        return method === "GET" ? await listWorlds(env.DB, identity) : await createWorld(request, env.DB, identity, env.PRIVATE_PILOT === "true");
+        return method === "GET" ? await listWorlds(env.DB, identity)
+          : await createWorld(request, env.DB, identity, env.PRIVATE_PILOT === "true", pilotLimit(env.PILOT_MAX_WORLDS, 1));
       }
       if (pathname === "/v1/invites/redeem") return await redeemInvite(request, env.DB, identity);
       if (relayFileMatch) return await configureRelayFile(request, env.DB, relayFileMatch[1]!, identity);

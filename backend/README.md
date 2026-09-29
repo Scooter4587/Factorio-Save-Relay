@@ -141,6 +141,11 @@ service needs separate `REGISTRATION_KEY` and `ACCOUNT_PEPPER` Worker secrets.
 The registration key is only used for creating a new account; the Windows app
 does not persist a password or registration key.
 
+Private-pilot capacity defaults to two accounts and one world. Deployments may
+raise those bounded limits with `PILOT_MAX_USERS` and `PILOT_MAX_WORLDS`; the
+live two-pair test uses four accounts and two worlds so disposable test data
+stays separate from the real shared save.
+
 Device tokens and invitation codes contain a UUID salt plus 256 random bits.
 D1 stores only SHA-256 hashes of the complete tokens. Invitation codes are opaque
 copy/paste strings, not the short human-readable codes in the initial sketch.

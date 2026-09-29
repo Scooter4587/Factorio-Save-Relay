@@ -3,7 +3,7 @@ export const PAGE = String.raw`<!doctype html>
 <meta name="color-scheme" content="dark"><title>Factorio Save Relay · Scooter Universe</title>
 <link rel="stylesheet" href="/factorio-relay/style.css"><script defer src="/factorio-relay/app.js"></script></head>
 <body><div class="shell">
-<header class="top"><a class="brand" href="https://scooteruniverse.eu/">SCOOTER<span>UNIVERSE</span></a><span class="tag">PRIVATE PILOT · 2 PLAYERS</span></header>
+<header class="top"><a class="brand" href="https://scooteruniverse.eu/">SCOOTER<span>UNIVERSE</span></a><span class="tag">PRIVATE PILOT</span></header>
 <main><section class="hero"><div class="eyebrow">FACTORIO / SHARED WORLD</div><h1>Jeden svet.<br><em>Dvaja hostitelia.</em></h1>
 <p>Bezpečné odovzdanie save ZIPu medzi dvoma hráčmi. Toto je ručné testovacie ovládanie; Factorio súbor na tvojom PC stránka nemení.</p></section>
 <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
@@ -61,7 +61,7 @@ function notice(message, error = false) {
   $('notice').hidden = false;
 }
 function status(error) {
-  const messages = { unauthorized:'Prihlásenie vypršalo. Prihlás sa znova.',invalid_credentials:'Meno účtu alebo heslo nie je správne.',invalid_recovery:'Meno účtu alebo núdzový kód nie je správny.',invalid_login_name:'Meno účtu môže mať 3–32 znakov: písmená bez diakritiky, čísla, bodku, podčiarkovník alebo pomlčku.',invalid_password:'Heslo musí mať aspoň 12 znakov.',account_exists:'Toto meno účtu už niekto používa.',account_upgrade_unavailable:'Účet už má prihlásenie alebo je toto meno obsadené.',registration_denied:'Registračný kľúč nie je správny.',registration_disabled:'Registrácia je momentálne vypnutá.',too_many_attempts:'Príliš veľa pokusov. Skús to o 15 minút.',pilot_full:'Dvaja hráči sú už zaregistrovaní.',pilot_world_limit:'Svet už existuje. Vyžiadaj si pozvánku.',lease_unavailable:'Svet práve vlastní druhý hostiteľ alebo sa zmenila verzia. Obnov stav.',upload_conflict:'Save sa zmenil počas nahrávania. Tvoja kópia sa neprepísala cez aktuálny svet.',invalid_zip:'Súbor nie je podporovaný alebo úplný ZIP.' };
+  const messages = { unauthorized:'Prihlásenie vypršalo. Prihlás sa znova.',invalid_credentials:'Meno účtu alebo heslo nie je správne.',invalid_recovery:'Meno účtu alebo núdzový kód nie je správny.',invalid_login_name:'Meno účtu môže mať 3–32 znakov: písmená bez diakritiky, čísla, bodku, podčiarkovník alebo pomlčku.',invalid_password:'Heslo musí mať aspoň 12 znakov.',account_exists:'Toto meno účtu už niekto používa.',account_upgrade_unavailable:'Účet už má prihlásenie alebo je toto meno obsadené.',registration_denied:'Registračný kľúč nie je správny.',registration_disabled:'Registrácia je momentálne vypnutá.',too_many_attempts:'Príliš veľa pokusov. Skús to o 15 minút.',pilot_full:'Súkromný pilot dosiahol limit účtov.',pilot_world_limit:'Súkromný pilot dosiahol limit svetov.',lease_unavailable:'Svet práve vlastní druhý hostiteľ alebo sa zmenila verzia. Obnov stav.',upload_conflict:'Save sa zmenil počas nahrávania. Tvoja kópia sa neprepísala cez aktuálny svet.',invalid_zip:'Súbor nie je podporovaný alebo úplný ZIP.' };
   return messages[error.code] || error.message || 'Požiadavka zlyhala.';
 }
 async function api(path, options = {}) {

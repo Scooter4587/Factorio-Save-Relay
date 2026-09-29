@@ -73,6 +73,7 @@ test("registration is local-only without a secret and gated by a secret remotely
   assert.equal(localOnly.status, 403);
   const remote = runtime({ modules: true, script, compatibilityDate: "2026-09-25", d1Databases: ["DB"],
     bindings: { ALLOW_REGISTRATION: "true", REGISTRATION_KEY: "long-disposable-test-secret", PRIVATE_PILOT: "true",
+      PILOT_MAX_USERS: "4", PILOT_MAX_WORLDS: "2",
       ACCOUNT_PEPPER: "test-only-account-pepper-never-deploy" } });
   try {
     const remoteDb = await remote.getD1Database("DB");
@@ -95,12 +96,13 @@ test("registration is local-only without a secret and gated by a secret remotely
     const registerPilot = (name) => api("/v1/devices/register", { method: "POST",
       headers: { "x-relay-registration-key": "long-disposable-test-secret" },
       body: { username: name, password: "strong friend password", displayName: name, deviceName: "Friend-PC" } }, remote);
-    const competingRegistrations = await Promise.all([registerPilot("friend-a"), registerPilot("friend-b")]);
-    assert.deepEqual(competingRegistrations.map((r) => r.status).sort(), [201, 403]);
+    const competingRegistrations = await Promise.all([
+      registerPilot("friend-a"), registerPilot("friend-b"), registerPilot("friend-c"), registerPilot("friend-d")]);
+    assert.deepEqual(competingRegistrations.map((r) => r.status).sort(), [201, 201, 201, 403]);
     assert.equal(competingRegistrations.find((r) => r.status === 403).body.error.code, "pilot_full");
     const friend = competingRegistrations.find((r) => r.status === 201).body;
-    assert.equal((await remoteDb.prepare("SELECT COUNT(*) AS count FROM users").first()).count, 2);
-    assert.equal((await remoteDb.prepare("SELECT COUNT(*) AS count FROM devices").first()).count, 2);
+    assert.equal((await remoteDb.prepare("SELECT COUNT(*) AS count FROM users").first()).count, 4);
+    assert.equal((await remoteDb.prepare("SELECT COUNT(*) AS count FROM devices").first()).count, 4);
     const desktopLogin = await api("/v1/accounts/login", { method: "POST",
       body: { username: "remote", password: "strong remote password", deviceName: "Remote desktop" } }, remote);
     assert.equal(desktopLogin.status, 200);
@@ -109,14 +111,15 @@ test("registration is local-only without a secret and gated by a secret remotely
 
     const createPilotWorld = (player) => api("/v1/worlds", { method: "POST", token: player.token,
       body: { name: "Shared save" } }, remote);
-    const competingWorlds = await Promise.all([createPilotWorld(owner), createPilotWorld(friend)]);
-    assert.deepEqual(competingWorlds.map((r) => r.status).sort(), [201, 403]);
+    const worldCreators = [owner, ...competingRegistrations.filter((r) => r.status === 201).map((r) => r.body)];
+    const competingWorlds = await Promise.all(worldCreators.slice(0, 3).map(createPilotWorld));
+    assert.deepEqual(competingWorlds.map((r) => r.status).sort(), [201, 201, 403]);
     assert.equal(competingWorlds.find((r) => r.status === 403).body.error.code, "pilot_world_limit");
-    assert.equal((await remoteDb.prepare("SELECT COUNT(*) AS count FROM worlds").first()).count, 1);
-    assert.equal((await remoteDb.prepare("SELECT COUNT(*) AS count FROM world_members").first()).count, 1);
+    assert.equal((await remoteDb.prepare("SELECT COUNT(*) AS count FROM worlds").first()).count, 2);
+    assert.equal((await remoteDb.prepare("SELECT COUNT(*) AS count FROM world_members").first()).count, 2);
     const created = competingWorlds.find((r) => r.status === 201).body.world;
-    const creator = created.ownerUserId === owner.user.id ? owner : friend;
-    const other = creator === owner ? friend : owner;
+    const creator = worldCreators.find((player) => player.user.id === created.ownerUserId);
+    const other = worldCreators.find((player) => player.user.id !== created.ownerUserId);
     const invitation = await api(`/v1/worlds/${created.id}/invites`, { method: "POST", token: creator.token }, remote);
     assert.equal(invitation.status, 201);
     const joined = await api("/v1/invites/redeem", { method: "POST", token: other.token,

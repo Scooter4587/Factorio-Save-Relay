@@ -53,7 +53,8 @@ async function rateLimit(db: D1Database): Promise<void> {
   if (result && result.attempts > 50) throw new ApiError(429, "too_many_attempts", "Too many attempts. Try again in 15 minutes.");
 }
 
-export async function createAccount(request: Request, db: D1Database, pepperValue: string | undefined): Promise<Response> {
+export async function createAccount(request: Request, db: D1Database, pepperValue: string | undefined,
+  maximumUsers = 2): Promise<Response> {
   const pepper = requirePepper(pepperValue);
   const body = await readBody(request);
   const username = loginName(body.username);
@@ -70,9 +71,10 @@ export async function createAccount(request: Request, db: D1Database, pepperValu
   }
   const [user, device] = await db.batch<{ id: string }>([
     db.prepare(`INSERT INTO users (id, display_name, login_name, password_salt, password_hash, recovery_hash)
-      SELECT ?, ?, ?, ?, ?, ? WHERE (SELECT COUNT(*) FROM users) < 2
+      SELECT ?, ?, ?, ?, ?, ? WHERE (SELECT COUNT(*) FROM users) < ?
       AND NOT EXISTS (SELECT 1 FROM users WHERE login_name = ?) RETURNING id`)
-      .bind(userId, displayName, username, salt, await hashPassword(secret, salt, pepper), await tokenHash(recoveryCode), username),
+      .bind(userId, displayName, username, salt, await hashPassword(secret, salt, pepper),
+        await tokenHash(recoveryCode), maximumUsers, username),
     db.prepare(`INSERT INTO devices (id, user_id, device_name, token_hash)
       SELECT ?, id, ?, ? FROM users WHERE id = ? RETURNING id`)
       .bind(deviceId, deviceName, await tokenHash(deviceToken), userId),
@@ -81,7 +83,7 @@ export async function createAccount(request: Request, db: D1Database, pepperValu
     if (await db.prepare("SELECT 1 FROM users WHERE login_name = ?").bind(username).first()) {
       throw new ApiError(409, "account_exists", "This account name is already in use.");
     }
-    throw new ApiError(403, "pilot_full", "This private pilot already has two registered players.");
+    throw new ApiError(403, "pilot_full", `This private pilot already has ${maximumUsers} registered players.`);
   }
   return json({ user: { id: userId, displayName, username }, device: { id: deviceId, deviceName }, token: deviceToken, recoveryCode }, 201);
 }

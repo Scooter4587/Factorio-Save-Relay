@@ -11,7 +11,9 @@
   "vars": {
     "ALLOW_REGISTRATION": "true",
     "ALLOW_LOCAL_TRANSFERS": "true",
-    "PRIVATE_PILOT": "true"
+    "PRIVATE_PILOT": "true",
+    "PILOT_MAX_USERS": "4",
+    "PILOT_MAX_WORLDS": "2"
   },
   "d1_databases": [
     {
